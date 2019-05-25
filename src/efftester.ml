@@ -87,6 +87,7 @@ type etype =
   | Typevar of typevar
   | Unit
   | Int
+  | Float
   | Bool
   | String
   | List of etype
@@ -94,7 +95,7 @@ type etype =
 
 let rec ftv = function
   | Typevar a -> [ a ]
-  | Unit | Int | Bool | String -> []
+  | Unit | Int | Float | Bool | String -> []
   | List et -> ftv et
   | Fun (a, _, r) -> ftv a @ ftv r
 ;;
@@ -102,6 +103,7 @@ let rec ftv = function
 type lit =
   | LitUnit
   | LitInt of int
+  | LitFloat of float
   | LitBool of bool
   | LitStr of string
   | LitList of lit list
@@ -120,13 +122,14 @@ let rec typeToOCaml ?(effannot = false) sb = function
   | Typevar a -> Printf.bprintf sb "'a%d" a
   | Unit -> Printf.bprintf sb "unit"
   | Int -> Printf.bprintf sb "int"
+  | Float -> Printf.bprintf sb "float"
   | Bool -> Printf.bprintf sb "bool"
   | String -> Printf.bprintf sb "string"
   | List s -> Printf.bprintf sb "(%a) list" (typeToOCaml ~effannot) s
   | Fun (s, e, t) ->
     let print_simple_type sb s =
       match s with
-      | Unit | Int | Bool | String | List _ | Typevar _ ->
+      | Unit | Int | Float | Bool | String | List _ | Typevar _ ->
         Printf.bprintf sb "%a" (typeToOCaml ~effannot) s
       | Fun _ -> Printf.bprintf sb "(%a)" (typeToOCaml ~effannot) s
     in
@@ -171,6 +174,8 @@ let toOCaml ?(typeannot = true) term =
   let rec littoOcamlSB sb = function
     | LitUnit -> Printf.bprintf sb "()"
     | LitInt i -> if i < 0 then Printf.bprintf sb "(%d)" i else Printf.bprintf sb "%d" i
+    | LitFloat f ->
+      if f < 0. then Printf.bprintf sb "(%F)" f else Printf.bprintf sb "%F" f
     | LitBool b -> Printf.bprintf sb "%B" b
     | LitStr s -> Printf.bprintf sb "\"%s\"" s
     | LitList ls ->
@@ -235,7 +240,7 @@ let rec arity = function
 
 let rec subst repl t =
   match t with
-  | Unit | Int | Bool | String -> t
+  | Unit | Int | Float | Bool | String -> t
   | Typevar a -> (try List.assoc a repl with Not_found -> t)
   | Fun (l, e, r) -> Fun (subst repl l, e, subst repl r)
   | List u -> List (subst repl u)
@@ -254,6 +259,7 @@ let rec unify_list = function
     (match (subst sub l, subst sub r) with
     | Unit, Unit -> sub
     | Int, Int -> sub
+    | Float, Float -> sub
     | Bool, Bool -> sub
     | String, String -> sub
     | Typevar a, Typevar b -> if a = b then sub else (a, r) :: sub
@@ -265,7 +271,8 @@ let rec unify_list = function
       sub' @ sub
     | Typevar a, _ -> if occurs a r then raise No_solution else (a, r) :: sub
     | _, Typevar a -> if occurs a l then raise No_solution else (a, l) :: sub
-    | Unit, _ | Int, _ | Bool, _ | String, _ | List _, _ | Fun _, _ -> raise No_solution)
+    | Unit, _ | Int, _ | Float, _ | Bool, _ | String, _ | List _, _ | Fun _, _ ->
+      raise No_solution)
 ;;
 
 let unify r t = try Sol (unify_list [ (r, t) ]) with No_solution -> No_sol
@@ -278,6 +285,8 @@ let rec types_compat t t' =
   | Unit, _ -> false
   | Int, Int -> true
   | Int, _ -> false
+  | Float, Float -> true
+  | Float, _ -> false
   | Bool, Bool -> true
   | Bool, _ -> false
   | String, String -> true
@@ -306,6 +315,7 @@ let imm_type t =
     match l with
     | LitUnit -> Unit
     | LitInt _ -> Int
+    | LitFloat _ -> Float
     | LitBool _ -> Bool
     | LitStr _ -> String
     | LitList l ->
@@ -366,7 +376,7 @@ end)
 
 let rec normalize_eff t =
   match t with
-  | Typevar _ | Unit | Int | Bool | String -> t
+  | Typevar _ | Unit | Int | Float | Bool | String -> t
   | List t' ->
     let t'' = normalize_eff t' in
     List t''
@@ -488,6 +498,7 @@ let rec literalGen t eff size =
   match t with
   | Unit -> Gen.return LitUnit
   | Int -> Gen.map (fun i -> LitInt i) intGen
+  | Float -> Gen.map (fun f -> LitFloat f) Gen.float
   | Bool -> Gen.map (fun b -> LitBool b) Gen.bool
   | String -> Gen.map (fun s -> LitStr s) stringGen
   | List (Typevar _) -> Gen.return (LitList [])
@@ -511,11 +522,11 @@ let typeGen =
   (* Generates ground types (sans type variables) *)
   Gen.fix (fun recgen n ->
       if n = 0
-      then Gen.oneofl [ Unit; Int; Bool; String ]
+      then Gen.oneofl [ Unit; Int; Float; Bool; String ]
       else
         Gen.frequency
           [ (* Generate no alphas *)
-            (4, Gen.oneofl [ Unit; Int; Bool; String ]);
+            (4, Gen.oneofl [ Unit; Int; Float; Bool; String ]);
             (1, Gen.map (fun t -> List t) (recgen (n / 2)));
             ( 1,
               Gen.map3
@@ -543,7 +554,7 @@ let litRules _env s eff size =
   in
   match s with
   | List s when listOfFun s -> []
-  | Unit | Int | Bool | String | List _ ->
+  | Unit | Int | Float | Bool | String | List _ ->
     [ (6, Gen.map (fun l -> Some (Lit l)) (literalGen s eff size)) ]
   | Fun _ | Typevar _ -> []
 ;;
@@ -596,7 +607,7 @@ let rec lamRules env u _eff size =
         return (Some (Lambda (Fun (s, myeff, imm_type m), x, s, m))))
   in
   match u with
-  | Unit | Int | Bool | String | List _ | Typevar _ -> []
+  | Unit | Int | Float | Bool | String | List _ | Typevar _ -> []
   | Fun (s, e, t) -> [ (8, gen s e t) ]
 
 (* Sized generator of applications (calls) according to the APP rule
@@ -965,8 +976,18 @@ let initTriEnv =
       ("lnot", Fun (Int, no_eff, Int));
       ("(lsl)", Fun (Int, no_eff, Fun (Int, no_eff, Int)));
       ("(lsr)", Fun (Int, no_eff, Fun (Int, no_eff, Int)));
-      ("(asr)", Fun (Int, no_eff, Fun (Int, no_eff, Int)));
+      ("(asr)", Fun (Int, no_eff, Fun (Int, no_eff, Int)))
       (* Floating-point arithmetic *)
+      (*; ("(~-.)",          Fun (Float, no_eff, Float))
+        ;("(~+.)",          Fun (Float, no_eff, Float)) *);
+      ("(+.)", Fun (Float, no_eff, Fun (Float, no_eff, Float)));
+      ("(-.)", Fun (Float, no_eff, Fun (Float, no_eff, Float)));
+      ("( *. )", Fun (Float, no_eff, Fun (Float, no_eff, Float)));
+      ("(/.)", Fun (Float, no_eff, Fun (Float, no_eff, Float)));
+      ("( ** )", Fun (Float, no_eff, Fun (Float, no_eff, Float)));
+      ("(sqrt)", Fun (Float, no_eff, Float));
+      ("(exp)", Fun (Float, no_eff, Float));
+      (* TODO: add other floating-point operations? *)
       (* String operations *)
       ("(^)", Fun (String, no_eff, Fun (String, no_eff, String)));
       (* Character operations *)
@@ -979,6 +1000,8 @@ let initTriEnv =
       ("bool_of_string", Fun (String, (true, false), Bool));
       ("string_of_int", Fun (Int, no_eff, String));
       ("int_of_string", Fun (String, (true, false), Int));
+      ("string_of_float", Fun (Float, no_eff, String));
+      ("float_of_string", Fun (String, (true, false), Float));
       (* Pair operations *)
       (* List operations *)
       ( "(@)",
@@ -988,6 +1011,7 @@ let initTriEnv =
       (* Output functions on standard output *)
       ("print_string", Fun (String, (true, false), Unit));
       ("print_int", Fun (Int, (true, false), Unit));
+      ("print_float", Fun (Float, (true, false), Unit));
       ("print_endline", Fun (String, (true, false), Unit));
       ("print_newline", Fun (Unit, (true, false), Unit));
       (* Output functions on standard error *)
@@ -1026,6 +1050,7 @@ let createLit t =
   match t with
   | Unit -> toTerm LitUnit
   | Int -> toTerm (LitInt (Gen.generate1 small_int.gen))
+  | Float -> toTerm (LitFloat (Gen.generate1 float.gen))
   | Bool -> toTerm (LitBool (Gen.generate1 bool.gen))
   | String -> toTerm (LitStr (Gen.generate1 stringGen))
   | List _ | Fun _ | Typevar _ -> None
@@ -1057,6 +1082,7 @@ let rec alpharename m x y =
 
 let shrinkLit = function
   | LitInt i -> Iter.map (fun i' -> Lit (LitInt i')) (Shrink.int i)
+  (* TODO how to shrink floats? *)
   | LitStr s -> Iter.map (fun s' -> Lit (LitStr s')) (Shrink.string s)
   | LitList ls -> Iter.map (fun ls' -> Lit (LitList ls')) (Shrink.list ls)
   | _ -> Iter.empty
@@ -1157,6 +1183,7 @@ let rec tcheck_lit l =
   match l with
   | LitUnit -> (Unit, no_eff)
   | LitInt _ -> (Int, no_eff)
+  | LitFloat _ -> (Float, no_eff)
   | LitBool _ -> (Bool, no_eff)
   | LitStr _ -> (String, no_eff)
   | LitList l ->
