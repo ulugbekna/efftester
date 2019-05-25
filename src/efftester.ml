@@ -19,13 +19,14 @@ let write_prog src filename =
   close_out ostr
 ;;
 
-let run srcfile compname compcomm =
-  let exefile = "testdir/" ^ compname in
-  let exitcode = Sys.command (compcomm ^ " " ^ srcfile ^ " -o " ^ exefile) in
+let run srcfile compil_filename compil_comm =
+  let exefile = "testdir/" ^ compil_filename in
+  let exitcode = Sys.command (compil_comm ^ " " ^ srcfile ^ " -o " ^ exefile) in
   (* Check that compilation was successful *)
   if exitcode <> 0
   then
-    failwith (compname ^ " compilation failed with error code " ^ string_of_int exitcode)
+    failwith
+      (compil_filename ^ " compilation failed with error code " ^ string_of_int exitcode)
   else (
     (* Run the compiled program *)
     let runcode = Sys.command ("./" ^ exefile ^ " >" ^ exefile ^ ".out 2>&1") in
@@ -37,23 +38,20 @@ let nativeByteEquivalence (*printFunction*) src =
   let file = "testdir/test.ml" in
   let () = write_prog src file in
   (* -w -5@20-26 *)
-  let nrun = run file "native" "ocamlopt -O3 -w -5-26" in
-  (* Silence warnings for partial applications *)
-  let brun = run file "byte" "ocamlc -w -5-26" in
-  (*                      and unused variables *)
-  match nrun, brun with
-  | (ncode, nout), (bcode, bout) ->
-    let comp = Sys.command ("diff -q " ^ nout ^ " " ^ bout ^ " > /dev/null") in
-    let res = ncode = bcode && comp = 0 in
-    if res
-    then (
-      print_string ".";
-      flush stdout;
-      res)
-    else (
-      print_string "x";
-      flush stdout;
-      res)
+  let ncode, nout = run file "native" "ocamlopt -O3 -w -5-26" in
+  (* Silence warnings for partial applications and unused variables *)
+  let bcode, bout = run file "byte" "ocamlc -w -5-26" in
+  let comp = Sys.command ("diff -q " ^ nout ^ " " ^ bout ^ " > /dev/null") in
+  let res = ncode = bcode && comp = 0 in
+  if res
+  then (
+    print_string ".";
+    flush stdout;
+    res)
+  else (
+    print_string "x";
+    flush stdout;
+    res)
 ;;
 
 (** AST type definitions  *)
@@ -171,7 +169,7 @@ let efftostr ((ef, ev) : eff) = "(" ^ string_of_bool ef ^ "," ^ string_of_bool e
 (* BNF grammar:
 
     exp ::= l | x | fun (x:t) -> exp | exp exp | let (x:t) = exp in exp
- 
+
    Same language but unambiguously formulated grammar:
 
     exp ::= app | fun (x:t) -> exp | let (x:t) = exp in exp | if exp then exp else exp
@@ -180,7 +178,7 @@ let efftostr ((ef, ev) : eff) = "(" ^ string_of_bool ef ^ "," ^ string_of_bool e
 
    The following prettyprinter is structured according to this grammar to cut down on
    the needless parentheses
- *)
+*)
 let toOCaml ?(typeannot = true) term =
   let rec littoOcamlSB sb = function
     | LitUnit -> Buffer.add_string sb "()"
@@ -324,11 +322,11 @@ let rec unify_list = function
     | _, Typevar a -> if occurs a l then raise No_solution else (a, l) :: sub
     | _, _
     (*	| (Unit, _)
-	| (Int, _)
-	| (Bool, _)
-	| (String, _)
-	| (List _, _)
-	| (Fun _, _) *)
+                     	| (Int, _)
+                     	| (Bool, _)
+                     	| (String, _)
+                     	| (List _, _)
+                     	| (Fun _, _) *)
       ->
       raise No_solution)
 ;;
@@ -605,7 +603,7 @@ let typeGen =
           ])
 ;;
 
-(* Sized generator of variables according to the LIT rule 
+(* Sized generator of variables according to the LIT rule
    @param env  : surrounding environment
    @param s    : desired goal type
    @param eff  : desired effect
@@ -613,7 +611,7 @@ let typeGen =
 
    --------------------- (LIT)
        env |- l : s
- *)
+*)
 let litRules env s eff size =
   let rec listOfFun = function
     | List s -> listOfFun s
@@ -627,7 +625,7 @@ let litRules env s eff size =
   | Fun _ | Typevar _ -> []
 ;;
 
-(* Sized generator of variables according to the VAR rule 
+(* Sized generator of variables according to the VAR rule
    @param env  : surrounding environment
    @param s    : desired goal type
    @param eff  : desired effect
@@ -636,7 +634,7 @@ let litRules env s eff size =
       (t:s) \in env
    --------------------- (VAR)
        env |- t : s
- *)
+*)
 let varRules env s eff size =
   (* vars have no immediate effect, so 'eff' param is ignored *)
   let candvars = VarSet.elements (lookupType (normalize_eff s) env) in
@@ -653,7 +651,7 @@ let varRules env s eff size =
   List.map (fun var -> 1, Gen.return (Some (Variable (s, var)))) candvars'
 ;;
 
-(* Sized generator of lambda terms according to the LAM rule 
+(* Sized generator of lambda terms according to the LAM rule
    @param env  : surrounding environment
    @param u    : desired goal type
    @param eff  : desired effect
@@ -662,7 +660,7 @@ let varRules env s eff size =
                (x:s), env |- m : t
     -------------------------------------------- (LAM)
        env |- (fun (x:s) -> m) : s -> t
- *)
+*)
 let rec lamRules env u eff size =
   (* lams have no immediate effect, so 'eff' param is ignored *)
   let gen s eff t =
@@ -680,7 +678,7 @@ let rec lamRules env u eff size =
   | Unit | Int | Bool | String | List _ | Typevar _ -> []
   | Fun (s, e, t) -> [ 8, gen s e t ]
 
-(* Sized generator of applications (calls) according to the APP rule 
+(* Sized generator of applications (calls) according to the APP rule
    @param env  : surrounding environment
    @param t    : desired goal type
    @param eff  : desired effect
@@ -689,7 +687,7 @@ let rec lamRules env u eff size =
        env |- f : s -> t     env |- x : s
     ---------------------------------------- (APP)
                  env |- f x : t
- *)
+*)
 and appRules env t eff size =
   let open Gen in
   let fromType funeff argeff s =
@@ -727,7 +725,7 @@ and appRules env t eff size =
   ; 4, typeGen (size / 2) >>= fromType no_eff eff
   ]
 
-(* Sized generator of multi-argument applications (calls) according to the INDIR rule 
+(* Sized generator of multi-argument applications (calls) according to the INDIR rule
    @param env  : surrounding environment
    @param t    : desired goal type
    @param eff  : desired effect
@@ -879,7 +877,7 @@ and indirRules env t eff size =
     f_type_map
     []
 
-(* Sized generator of let according to the LET rule 
+(* Sized generator of let according to the LET rule
    @param env  : surrounding environment
    @param t    : desired goal type
    @param eff  : desired effect
@@ -888,7 +886,7 @@ and indirRules env t eff size =
        env |- m : s     env, (x:s) |- n : t
     ------------------------------------------ (LET)
            env |- let x:s = m in n : t
- *)
+*)
 and letRules env t eff size =
   let open Gen in
   let fromType s =
@@ -1005,7 +1003,7 @@ let initTriEnv =
     (fun acc (var, t) -> addVar var t acc)
     (VarMap.empty, TypeMap.empty, TypeMap.empty)
     [ (* These follow the order and specification of the Pervasives module
-	  https://caml.inria.fr/pub/docs/manual-ocaml/libref/Pervasives.html *)
+         	  https://caml.inria.fr/pub/docs/manual-ocaml/libref/Pervasives.html *)
       (* Comparisons *)
       ( "(=)"
       , let a = Typevar (newtypevar ()) in
@@ -1016,27 +1014,27 @@ let initTriEnv =
     ; "(<)", Fun (Int, no_eff, Fun (Int, (true, false), Bool))
     ; "(>)", Fun (Int, no_eff, Fun (Int, (true, false), Bool))
     ; (*   ("(<=)",           let a = Typevar (newtypevar()) in
-			Fun (a, no_eff, Fun (a, (true,false), Bool)));
-     ("(>=)",           let a = Typevar (newtypevar()) in
-			Fun (a, no_eff, Fun (a, (true,false), Bool))); *)
+                     			Fun (a, no_eff, Fun (a, (true,false), Bool)));
+                     ("(>=)",           let a = Typevar (newtypevar()) in
+                     			Fun (a, no_eff, Fun (a, (true,false), Bool))); *)
       ( "compare"
       , let a = Typevar (newtypevar ()) in
         Fun (a, no_eff, Fun (a, (true, false), Int)) )
     ; (*   ("min",            let a = Typevar (newtypevar()) in
-			Fun (a, no_eff, Fun (a, (true,false), a)));
-     ("max",            let a = Typevar (newtypevar()) in
-			Fun (a, no_eff, Fun (a, (true,false), a)));
-     ("(==)",           let a = Typevar (newtypevar()) in
-			Fun (a, no_eff, Fun (a, (true,false), Bool)));
-     ("(!=)",           let a = Typevar (newtypevar()) in
-			Fun (a, no_eff, Fun (a, (true,false), Bool))); *)
+                     			Fun (a, no_eff, Fun (a, (true,false), a)));
+                     ("max",            let a = Typevar (newtypevar()) in
+                     			Fun (a, no_eff, Fun (a, (true,false), a)));
+                     ("(==)",           let a = Typevar (newtypevar()) in
+                     			Fun (a, no_eff, Fun (a, (true,false), Bool)));
+                     ("(!=)",           let a = Typevar (newtypevar()) in
+                     			Fun (a, no_eff, Fun (a, (true,false), Bool))); *)
       (* Boolean operations *)
       "not", Fun (Bool, no_eff, Bool)
     ; "(&&)", Fun (Bool, no_eff, Fun (Bool, no_eff, Bool))
     ; "(||)", Fun (Bool, no_eff, Fun (Bool, no_eff, Bool))
     ; (* Integer arithmetic *)
       (*   ("(~-)",           Fun (Int, no_eff, Int));
-     ("(~+)",           Fun (Int, no_eff, Int)); *)
+           ("(~+)",           Fun (Int, no_eff, Int)); *)
       "succ", Fun (Int, no_eff, Int)
     ; "pred", Fun (Int, no_eff, Int)
     ; "(+)", Fun (Int, no_eff, Fun (Int, no_eff, Int))
@@ -1046,7 +1044,7 @@ let initTriEnv =
     ; "(mod)", Fun (Int, no_eff, Fun (Int, (true, false), Int))
     ; "abs", Fun (Int, no_eff, Int)
     ; (*   ("max_int",        Int);
-     ("min_int",        Int); *)
+                     ("min_int",        Int); *)
       (* Bitwise operations *)
       "(land)", Fun (Int, no_eff, Fun (Int, no_eff, Int))
     ; "(lor)", Fun (Int, no_eff, Fun (Int, no_eff, Int))
@@ -1081,9 +1079,9 @@ let initTriEnv =
     ; "print_newline", Fun (Unit, (true, false), Unit)
     ; (* Output functions on standard error *)
       (*   ("prerr_string",   Fun (String, (true,false), Unit));
-     ("prerr_int",      Fun (Int, (true,false), Unit));
-     ("prerr_endline",  Fun (String, (true,false), Unit));
-     ("prerr_newline",  Fun (Unit, (true,false), Unit));    *)
+           ("prerr_int",      Fun (Int, (true,false), Unit));
+           ("prerr_endline",  Fun (String, (true,false), Unit));
+           ("prerr_newline",  Fun (Unit, (true,false), Unit));    *)
       (* Input functions on standard input *)
       (* General output functions *)
       (* General input functions *)
@@ -1104,7 +1102,7 @@ let initTriEnv =
       , let a = Typevar (newtypevar ()) in
         Fun (List a, (true, false), List a) )
       (*   ("List.concat",    let a = Typevar (newtypevar()) in
-			Fun (List (List a), no_eff, List a)); *)
+         			Fun (List (List a), no_eff, List a)); *)
     ]
 ;;
 
@@ -1222,7 +1220,7 @@ let wrapper shrinker opTerm =
 
 let shrinker term = wrapper termShrinker term
 
-(* 
+(*
           (t:s) \in env
    ---------------------------- (VAR)
        env |- t : s/ff/ff
