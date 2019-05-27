@@ -259,15 +259,7 @@ let rec unify_list = function
       sub' @ sub
     | Typevar a, _ -> if occurs a r then raise No_solution else (a, r) :: sub
     | _, Typevar a -> if occurs a l then raise No_solution else (a, l) :: sub
-    | _, _
-    (*	| (Unit, _)
-                     	| (Int, _)
-                     	| (Bool, _)
-                     	| (String, _)
-                     	| (List _, _)
-                     	| (Fun _, _) *)
-      ->
-      raise No_solution)
+    | Unit, _ | Int, _ | Bool, _ | String, _ | List _, _ | Fun _, _ -> raise No_solution)
 ;;
 
 let unify r t =
