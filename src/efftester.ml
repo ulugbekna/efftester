@@ -372,12 +372,11 @@ let rec normalize_eff t =
 
 let addMultiMap key value map =
   (* assume key has been normalized *)
-  try
-    let s = TypeMap.find key map in
+  match TypeMap.find key map with
+  | exception Not_found -> TypeMap.add key (VarSet.singleton value) map
+  | s ->
     let newSet = VarSet.add value s in
     TypeMap.add key newSet map
-  with
-  | Not_found -> TypeMap.add key (VarSet.singleton value) map
 ;;
 
 let removeMultiMap key value map =
