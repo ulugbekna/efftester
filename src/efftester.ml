@@ -272,18 +272,22 @@ let unify r t =
 let rec types_compat t t' =
   match t, t' with
   | Unit, Unit -> true
+  | Unit, _ -> false
   | Int, Int -> true
+  | Int, _ -> false
   | Bool, Bool -> true
+  | Bool, _ -> false
   | String, String -> true
+  | String, _ -> false
   | Fun (at, e, rt), Fun (at', e', rt') ->
     types_compat at' at && types_compat rt rt' && eff_leq e e'
+  | Fun _, _ -> false
   | List et, List et' -> types_compat et et'
+  | List _, _ -> false
   | Typevar a, _ ->
     (match unify t t' with
     | No_sol -> false
     | Sol _ -> true)
-  | _, Typevar a -> false
-  | _, _ -> false
 ;;
 
 let imm_eff t =
