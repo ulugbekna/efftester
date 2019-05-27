@@ -263,10 +263,7 @@ let rec unify_list = function
 ;;
 
 let unify r t =
-  try
-    let res = unify_list [ r, t ] in
-    Sol res
-  with
+  try Sol (unify_list [ r, t ]) with
   | No_solution -> No_sol
 ;;
 
