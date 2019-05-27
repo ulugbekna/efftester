@@ -1,15 +1,13 @@
 open Efftester
 
+let () =
+  resetvar ();
+  resettypevar ();
+  QCheck_runner.run_tests_main
+    [ (* unify_funtest;*)
+      (* gen_classify; *)
+      (* ocaml_test; *)
+      (* tcheck_test; *)
+      eq_test
+    ]
 ;;
-resetvar ()
-;;
-resettypevar ()
-
-;;
-QCheck_runner.run_tests_main
-  [ (* unify_funtest;*)
-    (* gen_classify; *)
-    (* ocaml_test; *)
-    (* tcheck_test; *)
-    eq_test
-  ]
