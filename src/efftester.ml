@@ -26,7 +26,7 @@ let run srcfile compil_filename compil_comm =
   else (
     (* Run the compiled program *)
     let runcode = Sys.command ("./" ^ exefile ^ " >" ^ exefile ^ ".out 2>&1") in
-    runcode, exefile ^ ".out")
+    (runcode, exefile ^ ".out"))
 ;;
 
 let nativeByteEquivalence (*printFunction*) src =
@@ -58,8 +58,8 @@ type typevar = int
 
 let resettypevar, newtypevar =
   let count = ref 0 in
-  ( (fun () -> count := 0)
-  , fun () ->
+  ( (fun () -> count := 0),
+    fun () ->
       let old = !count in
       incr count;
       old )
@@ -67,8 +67,8 @@ let resettypevar, newtypevar =
 
 let resetvar, newvar =
   let count = ref 0 in
-  ( (fun () -> count := 0)
-  , fun () ->
+  ( (fun () -> count := 0),
+    fun () ->
       let old = !count in
       incr count;
       "var" ^ string_of_int old )
@@ -76,8 +76,8 @@ let resetvar, newvar =
 
 let reseteffvar, neweffvar =
   let count = ref 0 in
-  ( (fun () -> count := 0)
-  , fun () ->
+  ( (fun () -> count := 0),
+    fun () ->
       let old = !count in
       incr count;
       "eff" ^ string_of_int old )
@@ -201,11 +201,11 @@ let toOCaml ?(typeannot = true) term =
 
 (** Effect system function *)
 
-let no_eff = false, false
-let eff_join (ef, ev) (ef', ev') = ef || ef', ev || ev'
+let no_eff = (false, false)
+let eff_join (ef, ev) (ef', ev') = (ef || ef', ev || ev')
 
 let eff_leq eff eff_exp =
-  match eff, eff_exp with
+  match (eff, eff_exp) with
   | (false, true), _ | _, (false, true) -> failwith "eff_leq: this should not happen"
   | (false, false), _ -> true (* no eff, compat with anything *)
   | (true, false), (true, _) -> true
@@ -228,9 +228,7 @@ let rec arity = function
 let rec subst repl t =
   match t with
   | Unit | Int | Bool | String -> t
-  | Typevar a ->
-    (try List.assoc a repl with
-    | Not_found -> t)
+  | Typevar a -> (try List.assoc a repl with Not_found -> t)
   | Fun (l, e, r) -> Fun (subst repl l, e, subst repl r)
   | List u -> List (subst repl u)
 ;;
@@ -245,32 +243,29 @@ let rec unify_list = function
   | [] -> []
   | (l, r) :: rest ->
     let sub = unify_list rest in
-    (match subst sub l, subst sub r with
+    (match (subst sub l, subst sub r) with
     | Unit, Unit -> sub
     | Int, Int -> sub
     | Bool, Bool -> sub
     | String, String -> sub
     | Typevar a, Typevar b -> if a = b then sub else (a, r) :: sub
     | List a, List b ->
-      let sub' = unify_list [ a, b ] in
+      let sub' = unify_list [ (a, b) ] in
       sub' @ sub
     | Fun (a, _, b), Fun (c, _, d) ->
-      let sub' = unify_list [ a, c; b, d ] in
+      let sub' = unify_list [ (a, c); (b, d) ] in
       sub' @ sub
     | Typevar a, _ -> if occurs a r then raise No_solution else (a, r) :: sub
     | _, Typevar a -> if occurs a l then raise No_solution else (a, l) :: sub
     | Unit, _ | Int, _ | Bool, _ | String, _ | List _, _ | Fun _, _ -> raise No_solution)
 ;;
 
-let unify r t =
-  try Sol (unify_list [ r, t ]) with
-  | No_solution -> No_sol
-;;
+let unify r t = try Sol (unify_list [ (r, t) ]) with No_solution -> No_sol
 
 (* determines whether the first arg is a generalization of the second *)
 (* or framed differently: whether the second is a particular instance of the first *)
 let rec types_compat t t' =
-  match t, t' with
+  match (t, t') with
   | Unit, Unit -> true
   | Unit, _ -> false
   | Int, Int -> true
@@ -403,10 +398,7 @@ let addVar var newType (env, revEnv, returnEnv) =
   let env' = VarMap.add var newType env in
   (* Overrides existing entry *)
   let norm_newType = normalize_eff newType in
-  let oldType =
-    try Some (VarMap.find var env) with
-    | Not_found -> None
-  in
+  let oldType = try Some (VarMap.find var env) with Not_found -> None in
   let revEnv' =
     let fixedRevEnv =
       match oldType with
@@ -439,24 +431,17 @@ let addVar var newType (env, revEnv, returnEnv) =
       fixedReturnEnv
       rts
   in
-  env', revEnv', returnEnv'
+  (env', revEnv', returnEnv')
 ;;
 
-let lookupVar x (env, _, _) =
-  try Some (VarMap.find x env) with
-  | Not_found -> None
-;;
+let lookupVar x (env, _, _) = try Some (VarMap.find x env) with Not_found -> None
 
 let lookupType s (_, revEnv, _) =
-  try TypeMap.find s revEnv with
-  | Not_found -> VarSet.empty
+  try TypeMap.find s revEnv with Not_found -> VarSet.empty
 ;;
 
 let lookupReturn s (env, _, returnEnv) =
-  let concreteSet =
-    try TypeMap.find s returnEnv with
-    | Not_found -> VarSet.empty
-  in
+  let concreteSet = try TypeMap.find s returnEnv with Not_found -> VarSet.empty in
   let arity_s = arity s in
   let rec has_compat_rt t =
     (arity t = arity_s && types_compat t s)
@@ -468,8 +453,7 @@ let lookupReturn s (env, _, returnEnv) =
   let polySet =
     VarSet.fold
       (fun x acc -> if has_compat_rt (VarMap.find x env) then VarSet.add x acc else acc)
-      (try TypeMap.find polyentry returnEnv with
-      | Not_found -> VarSet.empty)
+      (try TypeMap.find polyentry returnEnv with Not_found -> VarSet.empty)
       VarSet.empty
   in
   VarSet.union concreteSet polySet
@@ -486,7 +470,7 @@ let stringToString s = "\"" ^ s ^ "\""
 let sqrt i = int_of_float (Pervasives.sqrt (float_of_int i))
 
 let arb_int =
-  frequency [ 10, small_int; 5, int; 1, oneofl [ min_int; -1; 0; 1; max_int ] ]
+  frequency [ (10, small_int); (5, int); (1, oneofl [ min_int; -1; 0; 1; max_int ]) ]
 ;;
 
 let intGen = arb_int.gen (* Gen.small_int *)
@@ -513,7 +497,7 @@ let rec literalGen t eff size =
   | Fun _ -> failwith "literalGen: funtype arg. should not happen"
 ;;
 
-let effGen = Gen.oneofl [ false, false; true, false ]
+let effGen = Gen.oneofl [ (false, false); (true, false) ]
 
 let typeGen =
   (* Generates ground types (sans type variables) *)
@@ -523,10 +507,10 @@ let typeGen =
       else
         Gen.frequency
           [ (* Generate no alphas *)
-            4, Gen.oneofl [ Unit; Int; Bool; String ]
-          ; 1, Gen.map (fun t -> List t) (recgen (n / 2))
-          ; ( 1
-            , Gen.map3
+            (4, Gen.oneofl [ Unit; Int; Bool; String ]);
+            (1, Gen.map (fun t -> List t) (recgen (n / 2)));
+            ( 1,
+              Gen.map3
                 (fun t e t' -> Fun (t, e, t'))
                 (recgen (n / 2))
                 effGen
@@ -552,7 +536,7 @@ let litRules env s eff size =
   match s with
   | List s when listOfFun s -> []
   | Unit | Int | Bool | String | List _ ->
-    [ 6, Gen.map (fun l -> Some (Lit l)) (literalGen s eff size) ]
+    [ (6, Gen.map (fun l -> Some (Lit l)) (literalGen s eff size)) ]
   | Fun _ | Typevar _ -> []
 ;;
 
@@ -579,7 +563,7 @@ let varRules env s eff size =
         )
       candvars
   in
-  List.map (fun var -> 1, Gen.return (Some (Variable (s, var)))) candvars'
+  List.map (fun var -> (1, Gen.return (Some (Variable (s, var))))) candvars'
 ;;
 
 (* Sized generator of lambda terms according to the LAM rule
@@ -596,10 +580,8 @@ let rec lamRules env u eff size =
   (* lams have no immediate effect, so 'eff' param is ignored *)
   let gen s eff t =
     Gen.(
-      varGen
-      >>= fun x ->
-      listPermuteTermGenOuter (addVar x s env) t eff (size / 2)
-      >>= function
+      varGen >>= fun x ->
+      listPermuteTermGenOuter (addVar x s env) t eff (size / 2) >>= function
       | None -> return None
       | Some m ->
         let myeff = imm_eff m in
@@ -607,7 +589,7 @@ let rec lamRules env u eff size =
   in
   match u with
   | Unit | Int | Bool | String | List _ | Typevar _ -> []
-  | Fun (s, e, t) -> [ 8, gen s e t ]
+  | Fun (s, e, t) -> [ (8, gen s e t) ]
 
 (* Sized generator of applications (calls) according to the APP rule
    @param env  : surrounding environment
@@ -622,12 +604,10 @@ let rec lamRules env u eff size =
 and appRules env t eff size =
   let open Gen in
   let fromType funeff argeff s =
-    listPermuteTermGenOuter env (Fun (s, eff, t)) funeff (size / 2)
-    >>= function
+    listPermuteTermGenOuter env (Fun (s, eff, t)) funeff (size / 2) >>= function
     | None -> Gen.return None
     | Some f ->
-      listPermuteTermGenOuter env s argeff (size / 2)
-      >>= (function
+      listPermuteTermGenOuter env s argeff (size / 2) >>= function
       | None -> Gen.return None
       | Some x ->
         (match imm_type f with
@@ -635,7 +615,7 @@ and appRules env t eff size =
           let funeff = imm_eff f in
           let argeff = imm_eff x in
           let ef, ev = eff_join e (eff_join funeff argeff) in
-          let eff' = ef, ev || (fst funeff && fst argeff) in
+          let eff' = (ef, ev || (fst funeff && fst argeff)) in
           if eff_leq eff' eff
           then Gen.return (Some (App (frange, f, imm_type x, x, eff')))
           else
@@ -649,11 +629,11 @@ and appRules env t eff size =
             ^ " f is "
             ^ toOCaml ~typeannot:false f
             ^ " imm_type f is "
-            ^ typetostr ~effannot:true (imm_type f))))
+            ^ typetostr ~effannot:true (imm_type f)))
   in
   (* May generate eff in either operator or operand *)
-  [ 4, typeGen (size / 2) >>= fromType eff no_eff
-  ; 4, typeGen (size / 2) >>= fromType no_eff eff
+  [ (4, typeGen (size / 2) >>= fromType eff no_eff);
+    (4, typeGen (size / 2) >>= fromType no_eff eff)
   ]
 
 (* Sized generator of multi-argument applications (calls) according to the INDIR rule
@@ -751,8 +731,8 @@ and indirRules env t eff size =
       Gen.( >>= ) (build_subst ftvs) (fun sub' ->
           let goal_type = subst sub' goal_type in
           let argTypes =
-            try getArgTypes goal_type (subst sub t) with
-            | Failure exc ->
+            try getArgTypes goal_type (subst sub t)
+            with Failure exc ->
               print_endline ("s is " ^ typetostr ~effannot:true s);
               print_endline
                 ("sub is "
@@ -821,30 +801,25 @@ and indirRules env t eff size =
 and letRules env t eff size =
   let open Gen in
   let fromType s =
-    varGen
-    >>= fun x ->
-    listPermuteTermGenOuter env s eff (size / 2)
-    >>= function
+    varGen >>= fun x ->
+    listPermuteTermGenOuter env s eff (size / 2) >>= function
     | None -> return None
     | Some m ->
-      listPermuteTermGenOuter (addVar x s env) t eff (size / 2)
-      >>= (function
+      listPermuteTermGenOuter (addVar x s env) t eff (size / 2) >>= function
       | None -> return None
       | Some n ->
         let myeff = eff_join (imm_eff m) (imm_eff n) in
-        return (Some (Let (x, s, m, n, imm_type n, myeff))))
+        return (Some (Let (x, s, m, n, imm_type n, myeff)))
   in
-  [ 6, typeGen (size / 2) >>= fromType ]
+  [ (6, typeGen (size / 2) >>= fromType) ]
 
 and ifRules env t eff size =
   let open Gen in
   let gen =
-    listPermuteTermGenOuter env Bool eff (size / 3)
-    >>= function
+    listPermuteTermGenOuter env Bool eff (size / 3) >>= function
     | None -> return None
     | Some b ->
-      listPermuteTermGenOuter env t eff (size / 3)
-      >>= (function
+      listPermuteTermGenOuter env t eff (size / 3) >>= function
       | None -> return None
       | Some m ->
         let then_type = imm_type m in
@@ -857,8 +832,7 @@ and ifRules env t eff size =
             ^ typetostr ~effannot:true t)
         | Sol sub ->
           let subst_t = subst sub t in
-          listPermuteTermGenOuter env subst_t eff (size / 3)
-          >>= (function
+          listPermuteTermGenOuter env subst_t eff (size / 3) >>= function
           | None -> return None
           | Some n ->
             let else_type = imm_type n in
@@ -872,13 +846,13 @@ and ifRules env t eff size =
             | Sol sub' ->
               let mytype = subst sub' subst_t in
               let myeff = eff_join (imm_eff b) (eff_join (imm_eff m) (imm_eff n)) in
-              return (Some (If (mytype, b, m, n, myeff)))))))
+              return (Some (If (mytype, b, m, n, myeff)))))
   in
-  [ 3, gen ]
+  [ (3, gen) ]
 
 and listPermuteTermGenInner env goal size rules =
   let rec removeAt n xs =
-    match n, xs with
+    match (n, xs) with
     | 0, x :: xs -> xs
     | n, x :: xs -> x :: removeAt (n - 1) xs
     | _ -> failwith "index out of bounds"
@@ -886,7 +860,7 @@ and listPermuteTermGenInner env goal size rules =
   let elementsWeighted xs =
     let _, ig =
       List.fold_left
-        (fun (i, acc) (w, g) -> i + 1, (w, Gen.pair (Gen.return i) g) :: acc)
+        (fun (i, acc) (w, g) -> (i + 1, (w, Gen.pair (Gen.return i) g) :: acc))
         (0, [])
         xs
     in
@@ -910,14 +884,14 @@ and listPermuteTermGenOuter env goal eff size =
   else (
     let rules =
       List.concat
-        [ litRules env goal eff size
-        ; (*varRules env goal eff size;*)
+        [ litRules env goal eff size;
+          (*varRules env goal eff size;*)
           (* var rule is covered by indir with no args *)
-          appRules env goal eff size
-        ; lamRules env goal eff size
-        ; indirRules env goal eff size
-        ; letRules env goal eff size
-        ; ifRules env goal eff size
+          appRules env goal eff size;
+          lamRules env goal eff size;
+          indirRules env goal eff size;
+          letRules env goal eff size;
+          ifRules env goal eff size
         ]
     in
     listPermuteTermGenInner env goal size rules)
@@ -936,22 +910,22 @@ let initTriEnv =
     [ (* These follow the order and specification of the Pervasives module
          	  https://caml.inria.fr/pub/docs/manual-ocaml/libref/Pervasives.html *)
       (* Comparisons *)
-      ( "(=)"
-      , let a = Typevar (newtypevar ()) in
-        Fun (a, no_eff, Fun (a, (true, false), Bool)) )
-    ; ( "(<>)"
-      , let a = Typevar (newtypevar ()) in
-        Fun (a, no_eff, Fun (a, (true, false), Bool)) )
-    ; "(<)", Fun (Int, no_eff, Fun (Int, (true, false), Bool))
-    ; "(>)", Fun (Int, no_eff, Fun (Int, (true, false), Bool))
-    ; (*   ("(<=)",           let a = Typevar (newtypevar()) in
+      ( "(=)",
+        let a = Typevar (newtypevar ()) in
+        Fun (a, no_eff, Fun (a, (true, false), Bool)) );
+      ( "(<>)",
+        let a = Typevar (newtypevar ()) in
+        Fun (a, no_eff, Fun (a, (true, false), Bool)) );
+      ("(<)", Fun (Int, no_eff, Fun (Int, (true, false), Bool)));
+      ("(>)", Fun (Int, no_eff, Fun (Int, (true, false), Bool)));
+      (*   ("(<=)",           let a = Typevar (newtypevar()) in
                      			Fun (a, no_eff, Fun (a, (true,false), Bool)));
                      ("(>=)",           let a = Typevar (newtypevar()) in
                      			Fun (a, no_eff, Fun (a, (true,false), Bool))); *)
-      ( "compare"
-      , let a = Typevar (newtypevar ()) in
-        Fun (a, no_eff, Fun (a, (true, false), Int)) )
-    ; (*   ("min",            let a = Typevar (newtypevar()) in
+      ( "compare",
+        let a = Typevar (newtypevar ()) in
+        Fun (a, no_eff, Fun (a, (true, false), Int)) );
+      (*   ("min",            let a = Typevar (newtypevar()) in
                      			Fun (a, no_eff, Fun (a, (true,false), a)));
                      ("max",            let a = Typevar (newtypevar()) in
                      			Fun (a, no_eff, Fun (a, (true,false), a)));
@@ -960,55 +934,55 @@ let initTriEnv =
                      ("(!=)",           let a = Typevar (newtypevar()) in
                      			Fun (a, no_eff, Fun (a, (true,false), Bool))); *)
       (* Boolean operations *)
-      "not", Fun (Bool, no_eff, Bool)
-    ; "(&&)", Fun (Bool, no_eff, Fun (Bool, no_eff, Bool))
-    ; "(||)", Fun (Bool, no_eff, Fun (Bool, no_eff, Bool))
-    ; (* Integer arithmetic *)
+      ("not", Fun (Bool, no_eff, Bool));
+      ("(&&)", Fun (Bool, no_eff, Fun (Bool, no_eff, Bool)));
+      ("(||)", Fun (Bool, no_eff, Fun (Bool, no_eff, Bool)));
+      (* Integer arithmetic *)
       (*   ("(~-)",           Fun (Int, no_eff, Int));
            ("(~+)",           Fun (Int, no_eff, Int)); *)
-      "succ", Fun (Int, no_eff, Int)
-    ; "pred", Fun (Int, no_eff, Int)
-    ; "(+)", Fun (Int, no_eff, Fun (Int, no_eff, Int))
-    ; "(-)", Fun (Int, no_eff, Fun (Int, no_eff, Int))
-    ; "( * )", Fun (Int, no_eff, Fun (Int, no_eff, Int))
-    ; "(/)", Fun (Int, no_eff, Fun (Int, (true, false), Int))
-    ; "(mod)", Fun (Int, no_eff, Fun (Int, (true, false), Int))
-    ; "abs", Fun (Int, no_eff, Int)
-    ; (*   ("max_int",        Int);
+      ("succ", Fun (Int, no_eff, Int));
+      ("pred", Fun (Int, no_eff, Int));
+      ("(+)", Fun (Int, no_eff, Fun (Int, no_eff, Int)));
+      ("(-)", Fun (Int, no_eff, Fun (Int, no_eff, Int)));
+      ("( * )", Fun (Int, no_eff, Fun (Int, no_eff, Int)));
+      ("(/)", Fun (Int, no_eff, Fun (Int, (true, false), Int)));
+      ("(mod)", Fun (Int, no_eff, Fun (Int, (true, false), Int)));
+      ("abs", Fun (Int, no_eff, Int));
+      (*   ("max_int",        Int);
                      ("min_int",        Int); *)
       (* Bitwise operations *)
-      "(land)", Fun (Int, no_eff, Fun (Int, no_eff, Int))
-    ; "(lor)", Fun (Int, no_eff, Fun (Int, no_eff, Int))
-    ; "(lxor)", Fun (Int, no_eff, Fun (Int, no_eff, Int))
-    ; "lnot", Fun (Int, no_eff, Int)
-    ; "(lsl)", Fun (Int, no_eff, Fun (Int, no_eff, Int))
-    ; "(lsr)", Fun (Int, no_eff, Fun (Int, no_eff, Int))
-    ; "(asr)", Fun (Int, no_eff, Fun (Int, no_eff, Int))
-    ; (* Floating-point arithmetic *)
+      ("(land)", Fun (Int, no_eff, Fun (Int, no_eff, Int)));
+      ("(lor)", Fun (Int, no_eff, Fun (Int, no_eff, Int)));
+      ("(lxor)", Fun (Int, no_eff, Fun (Int, no_eff, Int)));
+      ("lnot", Fun (Int, no_eff, Int));
+      ("(lsl)", Fun (Int, no_eff, Fun (Int, no_eff, Int)));
+      ("(lsr)", Fun (Int, no_eff, Fun (Int, no_eff, Int)));
+      ("(asr)", Fun (Int, no_eff, Fun (Int, no_eff, Int)));
+      (* Floating-point arithmetic *)
       (* String operations *)
-      "(^)", Fun (String, no_eff, Fun (String, no_eff, String))
-    ; (* Character operations *)
+      ("(^)", Fun (String, no_eff, Fun (String, no_eff, String)));
+      (* Character operations *)
       (* Unit operations *)
-      ( "ignore"
-      , let a = Typevar (newtypevar ()) in
-        Fun (a, no_eff, Unit) )
-    ; (* String conversion functions *)
-      "string_of_bool", Fun (Bool, no_eff, String)
-    ; "bool_of_string", Fun (String, (true, false), Bool)
-    ; "string_of_int", Fun (Int, no_eff, String)
-    ; "int_of_string", Fun (String, (true, false), Int)
-    ; (* Pair operations *)
+      ( "ignore",
+        let a = Typevar (newtypevar ()) in
+        Fun (a, no_eff, Unit) );
+      (* String conversion functions *)
+      ("string_of_bool", Fun (Bool, no_eff, String));
+      ("bool_of_string", Fun (String, (true, false), Bool));
+      ("string_of_int", Fun (Int, no_eff, String));
+      ("int_of_string", Fun (String, (true, false), Int));
+      (* Pair operations *)
       (* List operations *)
-      ( "(@)"
-      , let a = Typevar (newtypevar ()) in
-        Fun (List a, no_eff, Fun (List a, no_eff, List a)) )
-    ; (* Input/output *)
+      ( "(@)",
+        let a = Typevar (newtypevar ()) in
+        Fun (List a, no_eff, Fun (List a, no_eff, List a)) );
+      (* Input/output *)
       (* Output functions on standard output *)
-      "print_string", Fun (String, (true, false), Unit)
-    ; "print_int", Fun (Int, (true, false), Unit)
-    ; "print_endline", Fun (String, (true, false), Unit)
-    ; "print_newline", Fun (Unit, (true, false), Unit)
-    ; (* Output functions on standard error *)
+      ("print_string", Fun (String, (true, false), Unit));
+      ("print_int", Fun (Int, (true, false), Unit));
+      ("print_endline", Fun (String, (true, false), Unit));
+      ("print_newline", Fun (Unit, (true, false), Unit));
+      (* Output functions on standard error *)
       (*   ("prerr_string",   Fun (String, (true,false), Unit));
            ("prerr_int",      Fun (Int, (true,false), Unit));
            ("prerr_endline",  Fun (String, (true,false), Unit));
@@ -1021,16 +995,16 @@ let initTriEnv =
       (* Result type *)
       (* Operations on format strings *)
       (* Program termination *)
-      ( "exit"
-      , let a = Typevar (newtypevar ()) in
-        Fun (Int, (true, false), a) )
-    ; (*   ("at_exit",        Fun (Fun (Unit, (true,false), Unit), (true,false), Unit)); *)
+      ( "exit",
+        let a = Typevar (newtypevar ()) in
+        Fun (Int, (true, false), a) );
+      (*   ("at_exit",        Fun (Fun (Unit, (true,false), Unit), (true,false), Unit)); *)
       (* More list operations from List module *)
-      ( "List.hd"
-      , let a = Typevar (newtypevar ()) in
-        Fun (List a, (true, false), a) )
-    ; ( "List.tl"
-      , let a = Typevar (newtypevar ()) in
+      ( "List.hd",
+        let a = Typevar (newtypevar ()) in
+        Fun (List a, (true, false), a) );
+      ( "List.tl",
+        let a = Typevar (newtypevar ()) in
         Fun (List a, (true, false), List a) )
       (*   ("List.concat",    let a = Typevar (newtypevar()) in
          			Fun (List (List a), no_eff, List a)); *)
@@ -1115,7 +1089,7 @@ let rec termShrinker term =
     (match createLit s with
     | Some c -> Iter.return c
     | _ -> Iter.empty)
-    <+> (match fv x n, m with
+    <+> (match (fv x n, m) with
         | false, Let (x', t', m', _, _, _) ->
           if fv x' n
           then (
@@ -1173,10 +1147,10 @@ let shrinker term = wrapper termShrinker term
 (* First version, checks type-and-effect annotation *)
 let rec tcheck_lit l =
   match l with
-  | LitUnit -> Unit, no_eff
-  | LitInt _ -> Int, no_eff
-  | LitBool _ -> Bool, no_eff
-  | LitStr _ -> String, no_eff
+  | LitUnit -> (Unit, no_eff)
+  | LitInt _ -> (Int, no_eff)
+  | LitBool _ -> (Bool, no_eff)
+  | LitStr _ -> (String, no_eff)
   | LitList l ->
     let etyp =
       List.fold_left
@@ -1196,7 +1170,7 @@ let rec tcheck_lit l =
         (Typevar (newtypevar ()))
         l
     in
-    List etyp, no_eff
+    (List etyp, no_eff)
 ;;
 
 let rec tcheck env term =
@@ -1206,10 +1180,9 @@ let rec tcheck env term =
     (try
        let et = VarMap.find v env in
        if types_compat et t (* annotation may be more concrete then inferred type *)
-       then et, no_eff
+       then (et, no_eff)
        else failwith "tcheck: variable types disagree"
-     with
-    | Not_found -> failwith "tcheck: unknown variable")
+     with Not_found -> failwith "tcheck: unknown variable")
   | App (rt, m, at, n, ceff) ->
     let mtyp, meff = tcheck env m in
     let ntyp, neff = tcheck env n in
@@ -1229,7 +1202,7 @@ let rec tcheck env term =
               then (
                 let j_eff = eff_join e (eff_join meff neff) in
                 if eff_leq j_eff ceff
-                then rt, j_eff
+                then (rt, j_eff)
                 else
                   failwith
                     ("tcheck: effect annotation disagree in application"
@@ -1283,7 +1256,7 @@ let rec tcheck env term =
       then (
         let j_eff = eff_join meff neff in
         if eff_leq j_eff leff
-        then ntyp, leff
+        then (ntyp, leff)
         else
           failwith
             ("tcheck: let-effect disagrees with annotation"
@@ -1303,7 +1276,7 @@ let rec tcheck env term =
     let mtyp, meff = tcheck (VarMap.add x s env) m in
     let ftyp = Fun (s, meff, mtyp) in
     if types_compat ftyp t
-    then ftyp, no_eff
+    then (ftyp, no_eff)
     else
       failwith
         ("tcheck: Lambda's type disagrees with annotation: "
@@ -1330,7 +1303,7 @@ let rec tcheck env term =
               if eff_leq meff e && eff_leq neff e
               then (
                 let e' = eff_join beff (eff_join meff neff) in
-                t, e')
+                (t, e'))
               else failwith "tcheck: If's branch effects disagree with annotation"
             else
               failwith
@@ -1369,17 +1342,17 @@ let rec tcheck env term =
 
 let print_wrap t =
   Let
-    ( "i"
-    , Int
-    , t
-    , App
-        ( Unit
-        , Variable (Fun (Int, (true, false), Unit), "print_int")
-        , Int
-        , Variable (Int, "i")
-        , (true, false) )
-    , Unit
-    , (true, false) )
+    ( "i",
+      Int,
+      t,
+      App
+        ( Unit,
+          Variable (Fun (Int, (true, false), Unit), "print_int"),
+          Int,
+          Variable (Int, "i"),
+          (true, false) ),
+      Unit,
+      (true, false) )
 ;;
 
 let term_gen =
@@ -1398,7 +1371,7 @@ let typegen =
     ~print:typetostr
     Gen.(
       frequency
-        [ 1, map (fun i -> Typevar i) (oneofl [ 1; 2; 3; 4; 5 ]); 6, sized typeGen ])
+        [ (1, map (fun i -> Typevar i) (oneofl [ 1; 2; 3; 4; 5 ])); (6, sized typeGen) ])
 ;;
 
 let unify_funtest =
@@ -1444,8 +1417,7 @@ let ocaml_test =
            let file = "testdir/ocamltest.ml" in
            let () = write_prog (toOCaml t) file in
            0 = Sys.command ("ocamlc -w -5@20-26 " ^ file)
-         with
-        | Failure _ -> false))
+         with Failure _ -> false))
 ;;
 
 let tcheck_test =
