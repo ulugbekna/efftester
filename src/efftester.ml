@@ -1,12 +1,8 @@
-(** *************************************************************** *)
-
-(** OCaml compiler backend tester                                   *)
-
-(** Initial version by Patrick Kasting and Mathias Nygaard Justesen *)
-
-(** Type and effect extension by Jan Midtgaard                      *)
-
-(** *************************************************************** *)
+(* *************************************************************** *)
+(* OCaml compiler backend tester                                   *)
+(* Initial version by Patrick Kasting and Mathias Nygaard Justesen *)
+(* Type and effect extension by Jan Midtgaard                      *)
+(* *************************************************************** *)
 
 open QCheck
 
@@ -37,8 +33,8 @@ let nativeByteEquivalence (*printFunction*) src =
   (* Write OCaml source to file *)
   let file = "testdir/test.ml" in
   let () = write_prog src file in
-  (* -w -5@20-26 *)
   let ncode, nout = run file "native" "ocamlopt -O3 -w -5-26" in
+  (* -w -5@20-26 *)
   (* Silence warnings for partial applications and unused variables *)
   let bcode, bout = run file "byte" "ocamlc -w -5-26" in
   let comp = Sys.command ("diff -q " ^ nout ^ " " ^ bout ^ " > /dev/null") in
