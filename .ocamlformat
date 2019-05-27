@@ -1,0 +1,5 @@
+profile = janestreet
+break-infix-before-func = false
+break-separators = after
+parens-tuple = always
+single-case = compact
