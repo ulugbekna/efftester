@@ -35,9 +35,8 @@ let coltest =
       true)
 ;;
 
+let () =
+  resetvar ();
+  resettypevar ();
+  QCheck_runner.run_tests_main [ coltest ]
 ;;
-resetvar ()
-;;
-resettypevar ()
-;;
-QCheck_runner.run_tests_main [ coltest ]
