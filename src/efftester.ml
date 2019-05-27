@@ -420,6 +420,7 @@ let addVar var newType (env, revEnv, returnEnv) =
     let rts = returnTypes norm_newType in
     let fixedReturnEnv =
       match oldType with
+      | None -> returnEnv
       | Some s ->
         List.fold_left
           (fun rEnv rt ->
@@ -429,7 +430,6 @@ let addVar var newType (env, revEnv, returnEnv) =
             else removeMultiMap polyentry var rEnv)
           returnEnv
           (returnTypes (normalize_eff s))
-      | None -> returnEnv
     in
     List.fold_left
       (fun rEnv rt ->
@@ -699,8 +699,8 @@ and indirRules env t eff size =
   let rec apply term rType n effacc = function
     | [] -> Gen.return (Some term)
     | arg :: args ->
-      let myeff = if n = 0 then eff else no_eff in
       (* arg 'n' may have effect 'eff' *)
+      let myeff = if n = 0 then eff else no_eff in
       Gen.( >>= )
         (listPermuteTermGenOuter env arg myeff (size / 2))
         (function
