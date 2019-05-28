@@ -118,23 +118,32 @@ type term =
 
 let rec typeToOCaml ?(effannot = false) sb = function
   | Typevar a -> Printf.bprintf sb "'a%d" a
-  | Unit -> Buffer.add_string sb "unit"
-  | Int -> Buffer.add_string sb "int"
-  | Bool -> Buffer.add_string sb "bool"
-  | String -> Buffer.add_string sb "string"
+  | Unit -> Printf.bprintf sb "unit"
+  | Int -> Printf.bprintf sb "int"
+  | Bool -> Printf.bprintf sb "bool"
+  | String -> Printf.bprintf sb "string"
   | List s -> Printf.bprintf sb "(%a) list" (typeToOCaml ~effannot) s
-  | Fun (s, (ef, ev), t) ->
-    let bprintf_fun_type format_str format_str_effannot =
-      let typeToOCamlAnnot = typeToOCaml ~effannot in
-      if effannot
-      then
-        Printf.bprintf sb format_str_effannot typeToOCamlAnnot s ef ev typeToOCamlAnnot t
-      else Printf.bprintf sb format_str typeToOCamlAnnot s typeToOCamlAnnot t
+  | Fun (s, e, t) ->
+    let print_simple_type sb s =
+      match s with
+      | Unit | Int | Bool | String | List _ | Typevar _ ->
+        Printf.bprintf sb "%a" (typeToOCaml ~effannot) s
+      | Fun _ -> Printf.bprintf sb "(%a)" (typeToOCaml ~effannot) s
     in
-    (match s with
-    | Unit | Int | Bool | String | List _ | Typevar _ ->
-      bprintf_fun_type "%a -> %a" "%a -%B/%B-> %a"
-    | Fun _ -> bprintf_fun_type "(%a) -> %a" "(%a) -%B/%B-> %a")
+    let print_effannot sb = function
+      | None -> ()
+      | Some (ef, ev) -> Printf.bprintf sb "%B/%B" ef ev
+    in
+    let print_type sb t = Printf.bprintf sb "%a" (typeToOCaml ~effannot) t in
+    Printf.bprintf
+      sb
+      "%a -%a> %a"
+      print_simple_type
+      s
+      print_effannot
+      (if effannot then Some e else None)
+      print_type
+      t
 ;;
 
 let typetostr ?(effannot = false) typ =
@@ -160,28 +169,27 @@ let efftostr ((ef, ev) : eff) = Printf.sprintf "(%B,%B)" ef ev
 *)
 let toOCaml ?(typeannot = true) term =
   let rec littoOcamlSB sb = function
-    | LitUnit -> Buffer.add_string sb "()"
+    | LitUnit -> Printf.bprintf sb "()"
     | LitInt i -> if i < 0 then Printf.bprintf sb "(%d)" i else Printf.bprintf sb "%d" i
     | LitBool b -> Printf.bprintf sb "%B" b
     | LitStr s -> Printf.bprintf sb "\"%s\"" s
     | LitList ls ->
-      Printf.bprintf
-        sb
-        "[%a]"
-        (fun sb ls -> List.iter (fun elt -> Printf.bprintf sb "%a; " littoOcamlSB elt) ls)
-        ls
+      let print_lst sb ls =
+        List.iter (fun elt -> Printf.bprintf sb "%a; " littoOcamlSB elt) ls
+      in
+      Printf.bprintf sb "[%a]" print_lst ls
   in
   let rec exp sb t =
-    let typeToOcamlNoAnnot = typeToOCaml ~effannot:false in
+    let typeToOCamlNoAnnot = typeToOCaml ~effannot:false in
+    let print_binder sb (x, t) =
+      if typeannot
+      then Printf.bprintf sb "(%s: %a)" x typeToOCamlNoAnnot t
+      else Printf.bprintf sb "%s" x
+    in
     match t with
-    | Lambda (_, x, t, m) ->
-      if typeannot
-      then Printf.bprintf sb "fun (%s: %a) -> %a" x typeToOcamlNoAnnot t exp m
-      else Printf.bprintf sb "fun %s -> %a" x exp m
+    | Lambda (_, x, t, m) -> Printf.bprintf sb "fun %a -> %a" print_binder (x, t) exp m
     | Let (x, t, m, n, _, _) ->
-      if typeannot
-      then Printf.bprintf sb "let (%s: %a) = %a in %a" x typeToOcamlNoAnnot t exp m exp n
-      else Printf.bprintf sb "let %s = %a in %a" x exp m exp n
+      Printf.bprintf sb "let %a = %a in %a" print_binder (x, t) exp m exp n
     | If (_, b, m, n, _) -> Printf.bprintf sb "if %a then %a else %a" exp b exp m exp n
     | _ -> app sb t
   and app sb t =
@@ -191,7 +199,7 @@ let toOCaml ?(typeannot = true) term =
   and arg sb t =
     match t with
     | Lit l -> littoOcamlSB sb l
-    | Variable (_, s) -> Buffer.add_string sb s
+    | Variable (_, s) -> Printf.bprintf sb "%s" s
     | _ -> Printf.bprintf sb "(%a)" exp t
   in
   let sb = Buffer.create 80 in
