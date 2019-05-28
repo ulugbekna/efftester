@@ -13,6 +13,7 @@ authors: [
   "Jan Midtgaard"
 ]
 maintainer: [
+  "Jan Midtgaard <mail@janmidtgaard.dk>"
   "Gabriel Scherer <gabriel.scherer@gmail.com>"
   "Ulugbek Abdullaev <ulugbekna@gmail.com>"
 ]
@@ -21,15 +22,9 @@ dev-repo: "git+https://github.com/gasche/efftester.git"
 depends: [
   "ocaml" {>= "4.04.0"}
   "qcheck" {>= "0.5.2"}
+  "ocamlformat" {dev & >= "0.9"}
   # FIXME: uncomment dune when set up
   # "dune" {build}
-]
-depopts: [
-  "ocamlformat" {>= "0.9"}
-]
-
-conflicts: [
-  "ocamlformat" {< "0.9"}
 ]
 
 build: [
