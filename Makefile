@@ -10,3 +10,6 @@ clean:
 	ocamlbuild -clean
 	rm -f *~
 	rm -f testdir/test.{ml,o,cmi,cmo,cmx} testdir/{byte,native,byte.out,native.out}
+
+format:
+	ocamlformat --inplace src/*
