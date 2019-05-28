@@ -1,0 +1,40 @@
+opam-version: "2.0"
+
+synopsis: "Effect-Driven Compiler Tester for OCaml"
+
+version: "dev"
+license: "BSD-2-Clause"
+homepage: "https://github.com/gasche/efftester"
+bug-reports: "https://github.com/gasche/efftester/issues"
+
+authors: [
+  "Patrick Kasting"
+  "Mathias Nygaard Justesen"
+  "Jan Midtgaard"
+]
+maintainer: [
+  "Gabriel Scherer <gabriel.scherer@gmail.com>"
+  "Ulugbek Abdullaev <ulugbekna@gmail.com>"
+]
+dev-repo: "git+https://github.com/gasche/efftester.git"
+
+depends: [
+  "ocaml" {>= "4.04.0"}
+  "qcheck" {>= "0.5.2"}
+  # FIXME: uncomment dune when set up
+  # "dune" {build}
+]
+depopts: [
+  "ocamlformat" {>= "0.9"}
+]
+
+conflicts: [
+  "ocamlformat" {< "0.9"}
+]
+
+build: [
+    [make "eff"]
+  # ["dune" "build" "-p" name "-j" jobs]
+]
+
+description: ""
