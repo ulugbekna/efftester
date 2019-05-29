@@ -1,15 +1,12 @@
-eff:
-	ocamlbuild -package qcheck src/efftester.cma
-	ocamlbuild -package qcheck src/effmain.byte
-	ocamlbuild -package qcheck src/effmain.native
+build:
+	dune build src/effmain.exe
 
-stat:
-	ocamlbuild -package qcheck src/effstat.native
+exec:
+	dune exec src/effmain.exe
 
 clean:
-	ocamlbuild -clean
-	rm -f *~
+	dune clean
 	rm -f testdir/test.{ml,o,cmi,cmo,cmx} testdir/{byte,native,byte.out,native.out}
 
 format:
-	ocamlformat --inplace src/*
+	dune build @fmt --auto-promote
