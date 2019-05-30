@@ -521,12 +521,13 @@ let effGen = Gen.oneofl [ (false, false); (true, false) ]
 let typeGen =
   (* Generates ground types (sans type variables) *)
   Gen.fix (fun recgen n ->
+      let base_types = [ Unit; Int; Float; Bool; String ] in
       if n = 0
-      then Gen.oneofl [ Unit; Int; Float; Bool; String ]
+      then Gen.oneofl base_types
       else
         Gen.frequency
           [ (* Generate no alphas *)
-            (4, Gen.oneofl [ Unit; Int; Float; Bool; String ]);
+            (4, Gen.oneofl base_types);
             (1, Gen.map (fun t -> List t) (recgen (n / 2)));
             ( 1,
               Gen.map3
