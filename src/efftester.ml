@@ -194,7 +194,7 @@ let toOCaml ?(typeannot = true) term =
     | _ -> app sb t
   and app sb t =
     match t with
-    | App (_, m, _, n, e) -> Printf.bprintf sb "%a %a" app m arg n
+    | App (_, m, _, n, _) -> Printf.bprintf sb "%a %a" app m arg n
     | _ -> arg sb t
   and arg sb t =
     match t with
@@ -287,7 +287,7 @@ let rec types_compat t t' =
   | Fun _, _ -> false
   | List et, List et' -> types_compat et et'
   | List _, _ -> false
-  | Typevar a, _ ->
+  | Typevar _, _ ->
     (match unify t t' with
     | No_sol -> false
     | Sol _ -> true)
@@ -370,7 +370,7 @@ let rec normalize_eff t =
   | List t' ->
     let t'' = normalize_eff t' in
     List t''
-  | Fun (s, e, t) -> Fun (normalize_eff s, no_eff, normalize_eff t)
+  | Fun (s, _, t) -> Fun (normalize_eff s, no_eff, normalize_eff t)
 ;;
 
 let addMultiMap key value map =
@@ -535,7 +535,7 @@ let typeGen =
    --------------------- (LIT)
        env |- l : s
 *)
-let litRules env s eff size =
+let litRules _env s eff size =
   let rec listOfFun = function
     | List s -> listOfFun s
     | Fun _ -> true
@@ -558,7 +558,7 @@ let litRules env s eff size =
    --------------------- (VAR)
        env |- t : s
 *)
-let varRules env s eff size =
+let varRules env s _eff _size =
   (* vars have no immediate effect, so 'eff' param is ignored *)
   let candvars = VarSet.elements (lookupType (normalize_eff s) env) in
   let arity_s = arity s in
@@ -584,7 +584,7 @@ let varRules env s eff size =
     -------------------------------------------- (LAM)
        env |- (fun (x:s) -> m) : s -> t
 *)
-let rec lamRules env u eff size =
+let rec lamRules env u _eff size =
   (* lams have no immediate effect, so 'eff' param is ignored *)
   let gen s eff t =
     Gen.(
@@ -694,7 +694,7 @@ and indirRules env t eff size =
           | None -> Gen.return None
           | Some a ->
             (match rType with
-            | Fun (argType, funeff, newRType) ->
+            | Fun (_, funeff, newRType) ->
               let my_actual_eff = eff_join funeff (imm_eff a) in
               (* actual effect *)
               let effacc' = eff_join my_actual_eff effacc in
@@ -861,7 +861,7 @@ and ifRules env t eff size =
 and listPermuteTermGenInner env goal size rules =
   let rec removeAt n xs =
     match (n, xs) with
-    | 0, x :: xs -> xs
+    | 0, _ :: xs -> xs
     | n, x :: xs -> x :: removeAt (n - 1) xs
     | _ -> failwith "index out of bounds"
   in
@@ -1055,7 +1055,7 @@ let rec alpharename m x y =
     If (t, alpharename b x y, alpharename n x y, alpharename n' x y, e)
 ;;
 
-let rec shrinkLit = function
+let shrinkLit = function
   | LitInt i -> Iter.map (fun i' -> Lit (LitInt i')) (Shrink.int i)
   | LitStr s -> Iter.map (fun s' -> Lit (LitStr s')) (Shrink.string s)
   | LitList ls -> Iter.map (fun ls' -> Lit (LitList ls')) (Shrink.list ls)
@@ -1067,7 +1067,7 @@ let ( <+> ) = Iter.( <+> )
 let rec termShrinker term =
   match term with
   | Lit l -> shrinkLit l
-  | Variable (t, s) ->
+  | Variable (t, _) ->
     (match createLit t with
     | Some c -> Iter.return c
     | _ -> Iter.empty)
@@ -1078,12 +1078,12 @@ let rec termShrinker term =
     | None -> Iter.empty)
     <+> (if types_compat at rt then Iter.return n else Iter.empty)
     <+> (match m with
-        | App (rt', m', at', n', e') when types_compat at' rt -> Iter.return n'
-        | Lambda (t', x, s, m') ->
+        | App (_, _, at', n', _) when types_compat at' rt -> Iter.return n'
+        | Lambda (_, x, s, m') ->
           if fv x m'
           then Iter.return (Let (x, s, n, m', rt, e))
           else Iter.of_list [ m'; Let (x, s, n, m', rt, e) ]
-        | Let (x, t, m', n', s, e') ->
+        | Let (x, t, m', n', _, _) ->
           if fv x n
           then (
             (* potential var capt.*)
@@ -1195,7 +1195,7 @@ let rec tcheck env term =
     let mtyp, meff = tcheck env m in
     let ntyp, neff = tcheck env n in
     (match mtyp with
-    | Fun (at', e, rt') ->
+    | Fun (_, e, _) ->
       if meff = no_eff || neff = no_eff
       then (
         match unify mtyp (Fun (at, ceff, rt)) with
@@ -1397,7 +1397,7 @@ let gen_classify =
     ~count:1000
     ~name:"classify gen"
     (make ~collect:(fun t -> if t = None then "None" else "Some") term_gen.gen)
-    (fun t ->
+    (fun _ ->
       let () =
         print_string ".";
         flush stdout

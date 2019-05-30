@@ -1,4 +1,6 @@
 _build/
 _opam/
+testdir/*
+*/.merlin
 *.byte
 *.native
