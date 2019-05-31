@@ -403,7 +403,10 @@ let removeMultiMap key value map =
   else TypeMap.add key fixedOldTypeSet map
 ;;
 
-type tridirEnv = etype VarMap.t * VarSet.t TypeMap.t * VarSet.t TypeMap.t
+type typeEnv = etype VarMap.t
+type revEnv = VarSet.t TypeMap.t
+type retEnv = VarSet.t TypeMap.t
+type tridirEnv = typeEnv * revEnv * retEnv
 
 let rec returnTypes = function
   | Fun (s, e, t) -> Fun (s, e, t) :: returnTypes t
