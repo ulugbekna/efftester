@@ -1391,6 +1391,35 @@ let print_wrap t =
       (true, false) )
 ;;
 
+let printer_by_etype typ =
+  let fun_name, printer_typ_opt =
+    match typ with
+    | Int -> ("print_int", lookupVar "print_int" initTriEnv)
+    | Float -> ("print_float", lookupVar "print_float" initTriEnv)
+    | String -> ("print_string", lookupVar "print_string" initTriEnv)
+    | Unit | Typevar _ | List _ | Fun _ | Bool ->
+      failwith
+        "printer_by_etype: such base type should not be generated (not implemented)"
+  in
+  match printer_typ_opt with
+  | Some t -> (fun_name, t)
+  | None -> failwith "printer_by_etype: printer for this type is unavailable."
+;;
+
+let rand_print_wrap typ trm =
+  let printer =
+    let fun_name, fun_type = printer_by_etype typ in
+    Variable (fun_type, fun_name)
+  in
+  Let
+    ( "x",
+      typ,
+      trm,
+      App (Unit, printer, typ, Variable (typ, "x"), (true, false)),
+      Unit,
+      (true, false) )
+;;
+
 let term_gen =
   make
     ~print:(Print.option (toOCaml ~typeannot:false))
@@ -1398,7 +1427,15 @@ let term_gen =
     (listPermuteTermGenRecWrapper initTriEnv Int (true, false))
 ;;
 
+let rand_term_gen typ =
+  make
+    ~print:(Print.option (toOCaml ~typeannot:false))
+    (*       ~shrink:shrinker *)
+    (listPermuteTermGenRecWrapper initTriEnv typ (true, false))
+;;
+
 let term_gen_shrink = set_shrink shrinker term_gen
+let rand_term_gen_shrink t = set_shrink shrinker (rand_term_gen t)
 
 let typegen =
   make
@@ -1486,6 +1523,21 @@ let eq_test =
       match topt with
       | None -> false
       | Some t -> nativeByteEquivalence (toOCaml (print_wrap t)))
+;;
+
+let rand_eq_test =
+  let typ = Gen.generate1 (Gen.oneofl [ Int; Float; String ]) in
+  Test.make
+    ~count:500
+    ~name:"bytecode/native backends agree"
+    (rand_term_gen_shrink typ)
+    (fun topt ->
+      topt
+      <> None
+      ==>
+      match topt with
+      | None -> false
+      | Some t -> nativeByteEquivalence (toOCaml (rand_print_wrap typ t)))
 ;;
 
 (* The actual call to QCheck_runner.run_tests_main is located in effmain.ml *)
