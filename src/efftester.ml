@@ -499,28 +499,38 @@ let initTriEnv =
         Fun (a, no_eff, Fun (a, (true, false), Bool)) );
       ("(<)", Fun (Int, no_eff, Fun (Int, (true, false), Bool)));
       ("(>)", Fun (Int, no_eff, Fun (Int, (true, false), Bool)));
-      (*   ("(<=)",           let a = Typevar (newtypevar()) in
-                     			Fun (a, no_eff, Fun (a, (true,false), Bool)));
-                     ("(>=)",           let a = Typevar (newtypevar()) in
-                     			Fun (a, no_eff, Fun (a, (true,false), Bool))); *)
+      (*
+        ("(<=)", let a = Typevar (newtypevar()) in
+        Fun (a, no_eff, Fun (a, (true,false), Bool)));
+        ("(>=)",
+        let a = Typevar (newtypevar()) in
+        Fun (a, no_eff, Fun (a, (true,false), Bool)));
+      *)
       ( "compare",
         let a = Typevar (newtypevar ()) in
         Fun (a, no_eff, Fun (a, (true, false), Int)) );
-      (*   ("min",            let a = Typevar (newtypevar()) in
-                     			Fun (a, no_eff, Fun (a, (true,false), a)));
-                     ("max",            let a = Typevar (newtypevar()) in
-                     			Fun (a, no_eff, Fun (a, (true,false), a)));
-                     ("(==)",           let a = Typevar (newtypevar()) in
-                     			Fun (a, no_eff, Fun (a, (true,false), Bool)));
-                     ("(!=)",           let a = Typevar (newtypevar()) in
-                     			Fun (a, no_eff, Fun (a, (true,false), Bool))); *)
+      (*
+        ("min", let a = Typevar (newtypevar()) in
+        Fun (a, no_eff, Fun (a, (true,false), a)));
+        ("max",
+          let a = Typevar (newtypevar()) in
+          Fun (a, no_eff, Fun (a, (true,false), a)));
+        ("(==)",
+          let a = Typevar (newtypevar()) in
+          Fun (a, no_eff, Fun (a, (true,false), Bool)));
+        ("(!=)",
+          let a = Typevar (newtypevar()) in
+          Fun (a, no_eff, Fun (a, (true,false), Bool)));
+      *)
       (* Boolean operations *)
       ("not", Fun (Bool, no_eff, Bool));
       ("(&&)", Fun (Bool, no_eff, Fun (Bool, no_eff, Bool)));
       ("(||)", Fun (Bool, no_eff, Fun (Bool, no_eff, Bool)));
       (* Integer arithmetic *)
-      (*   ("(~-)",           Fun (Int, no_eff, Int));
-           ("(~+)",           Fun (Int, no_eff, Int)); *)
+      (*
+        ("(~-)", Fun (Int, no_eff, Int));
+        ("(~+)", Fun (Int, no_eff, Int));
+      *)
       ("succ", Fun (Int, no_eff, Int));
       ("pred", Fun (Int, no_eff, Int));
       ("(+)", Fun (Int, no_eff, Fun (Int, no_eff, Int)));
@@ -529,8 +539,10 @@ let initTriEnv =
       ("(/)", Fun (Int, no_eff, Fun (Int, (true, false), Int)));
       ("(mod)", Fun (Int, no_eff, Fun (Int, (true, false), Int)));
       ("abs", Fun (Int, no_eff, Int));
-      (*   ("max_int",        Int);
-                     ("min_int",        Int); *)
+      (*
+        ("max_int", Int);
+        ("min_int",        Int);
+      *)
       (* Bitwise operations *)
       ("(land)", Fun (Int, no_eff, Fun (Int, no_eff, Int)));
       ("(lor)", Fun (Int, no_eff, Fun (Int, no_eff, Int)));
@@ -540,8 +552,10 @@ let initTriEnv =
       ("(lsr)", Fun (Int, no_eff, Fun (Int, no_eff, Int)));
       ("(asr)", Fun (Int, no_eff, Fun (Int, no_eff, Int)))
       (* Floating-point arithmetic *)
-      (*; ("(~-.)",          Fun (Float, no_eff, Float))
-        ;("(~+.)",          Fun (Float, no_eff, Float)) *);
+      (*
+        ("(~-.)",          Fun (Float, no_eff, Float));
+        ("(~+.)",          Fun (Float, no_eff, Float));
+      *);
       ("(+.)", Fun (Float, no_eff, Fun (Float, no_eff, Float)));
       ("(-.)", Fun (Float, no_eff, Fun (Float, no_eff, Float)));
       ("( *. )", Fun (Float, no_eff, Fun (Float, no_eff, Float)));
@@ -577,10 +591,12 @@ let initTriEnv =
       ("print_endline", Fun (String, (true, false), Unit));
       ("print_newline", Fun (Unit, (true, false), Unit));
       (* Output functions on standard error *)
-      (*   ("prerr_string",   Fun (String, (true,false), Unit));
-           ("prerr_int",      Fun (Int, (true,false), Unit));
-           ("prerr_endline",  Fun (String, (true,false), Unit));
-           ("prerr_newline",  Fun (Unit, (true,false), Unit));    *)
+      (*
+        ("prerr_string",   Fun (String, (true,false), Unit));
+        ("prerr_int",      Fun (Int, (true,false), Unit));
+        ("prerr_endline",  Fun (String, (true,false), Unit));
+        ("prerr_newline",  Fun (Unit, (true,false), Unit));
+      *)
       (* Input functions on standard input *)
       (* General output functions *)
       (* General input functions *)
@@ -592,7 +608,9 @@ let initTriEnv =
       ( "exit",
         let a = Typevar (newtypevar ()) in
         Fun (Int, (true, false), a) );
-      (*   ("at_exit",        Fun (Fun (Unit, (true,false), Unit), (true,false), Unit)); *)
+      (*
+        ("at_exit",        Fun (Fun (Unit, (true,false), Unit), (true,false), Unit));
+      *)
       (* More list operations from List module *)
       ( "List.hd",
         let a = Typevar (newtypevar ()) in
@@ -600,8 +618,10 @@ let initTriEnv =
       ( "List.tl",
         let a = Typevar (newtypevar ()) in
         Fun (List a, (true, false), List a) )
-      (*   ("List.concat",    let a = Typevar (newtypevar()) in
-         			Fun (List (List a), no_eff, List a)); *)
+      (*
+        ("List.concat",    let a = Typevar (newtypevar()) in
+        Fun (List (List a), no_eff, List a));
+      *)
     ]
 ;;
 
