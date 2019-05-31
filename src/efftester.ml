@@ -348,7 +348,7 @@ let imm_type t =
   | If (typ, _, _, _, _) -> typ
 ;;
 
-(** Enviroment type definitions and functions *)
+(** Environment type definitions and functions *)
 
 module TypeSet = Set.Make (struct
   type t = etype
@@ -1397,8 +1397,6 @@ let term_gen =
     (*       ~shrink:shrinker *)
     (listPermuteTermGenRecWrapper initTriEnv Int (true, false))
 ;;
-
-(* Initial goal here! *)
 
 let term_gen_shrink = set_shrink shrinker term_gen
 
