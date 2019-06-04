@@ -25,7 +25,7 @@ let coll_gen =
       match e with
       | None -> "0"
       | Some e -> string_of_int (term_size e))
-    term_gen
+    int_term_gen
 ;;
 
 let coltest =

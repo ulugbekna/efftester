@@ -8,7 +8,8 @@ let () =
       (* gen_classify; *)
       (* ocaml_test; *)
       (* tcheck_test; *)
-      (* eq_test *)
-      rand_eq_test
+      (* int_eq_test; *)
+      (* rand_eq_test Float; *)
+      dep_eq_test
     ]
 ;;
