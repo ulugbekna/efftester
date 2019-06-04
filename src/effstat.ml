@@ -3,9 +3,9 @@ open Efftester
 
 (** A classifier *)
 
-let rec lit_size l =
+let lit_size l =
   match l with
-  | LitUnit | LitInt _ | LitBool _ | LitStr _ -> 1
+  | LitUnit | LitInt _ | LitFloat _ | LitBool _ | LitStr _ -> 1
   | LitList ls -> List.length ls
 ;;
 
@@ -13,9 +13,9 @@ let rec term_size e =
   match e with
   | Lit l -> lit_size l
   | Variable (_, _) -> 1
-  | Lambda (_, x, _, e) -> 1 + term_size e
+  | Lambda (_, _x, _, e) -> 1 + term_size e
   | App (_, e, _, e', _) -> 1 + term_size e + term_size e'
-  | Let (x, _, e, e', _, _) -> 1 + term_size e + term_size e'
+  | Let (_x, _, e, e', _, _) -> 1 + term_size e + term_size e'
   | If (_, e, e', e'', _) -> 1 + term_size e + term_size e' + term_size e''
 ;;
 
@@ -29,7 +29,7 @@ let coll_gen =
 ;;
 
 let coltest =
-  Test.make ~count:50 (*1000*) coll_gen (fun e ->
+  Test.make ~count:50 (*1000*) coll_gen (fun _e ->
       print_char '.';
       flush stdout;
       true)
