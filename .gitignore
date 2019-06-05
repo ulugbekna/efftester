@@ -1,6 +1,5 @@
 _build/
 _opam/
-generated_tests/
 */.merlin
 *.byte
 *.native

@@ -1,6 +1,6 @@
 .PHONY: build
 build:
-	mkdir generated_tests && dune build src/effmain.exe
+	dune build src/effmain.exe
 
 .PHONY: exec
 exec:
@@ -13,7 +13,7 @@ tests:
 .PHONY: clean
 clean:
 	dune clean
-	rm -f -r generated_tests
+	rm -f generated_tests/*
 
 .PHONY: clean
 format:
