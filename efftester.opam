@@ -23,13 +23,12 @@ depends: [
   "ocaml" {>= "4.04.0"}
   "qcheck" {>= "0.5.2"}
   "ocamlformat" {dev & >= "0.9"}
-  # FIXME: uncomment dune when set up
-  # "dune" {build}
+  "dune" {build}
 ]
 
 build: [
-    [make "eff"]
-  # ["dune" "build" "-p" name "-j" jobs]
+    [make "build"]
+    [make "tests"] {with-test}
 ]
 
 description: ""
