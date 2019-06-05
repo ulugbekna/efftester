@@ -4,3 +4,4 @@ testdir/*
 */.merlin
 *.byte
 *.native
+*.out
