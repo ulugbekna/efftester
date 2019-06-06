@@ -173,9 +173,11 @@ let efftostr ((ef, ev) : eff) = Printf.sprintf "(%B,%B)" ef ev
 let toOCaml ?(typeannot = true) term =
   let rec littoOcamlSB sb = function
     | LitUnit -> Printf.bprintf sb "()"
-    | LitInt i -> if i < 0 then Printf.bprintf sb "(%d)" i else Printf.bprintf sb "%d" i
+    | LitInt i -> if i <= 0 then Printf.bprintf sb "(%d)" i else Printf.bprintf sb "%d" i
     | LitFloat f ->
-      if f < 0. then Printf.bprintf sb "(%F)" f else Printf.bprintf sb "%F" f
+      if f <= 0. then Printf.bprintf sb "(%F)" f else Printf.bprintf sb "%F" f
+    (* We want parentheses when f equals (-0.);
+        Without parentheses -0. is interpreted as an arithmetic operation function. *)
     | LitBool b -> Printf.bprintf sb "%B" b
     | LitStr s -> Printf.bprintf sb "\"%s\"" s
     | LitList ls ->
@@ -487,18 +489,36 @@ let stringGen = Gen.small_string ~gen:alphaGen
 let stringToString s = "\"" ^ s ^ "\""
 let sqrt i = int_of_float (Pervasives.sqrt (float_of_int i))
 
-let arb_int =
-  frequency [ (10, small_int); (5, int); (1, oneofl [ min_int; -1; 0; 1; max_int ]) ]
+let int_gen =
+  Gen.(
+    frequency [ (10, small_int); (5, int); (1, oneofl [ min_int; -1; 0; 1; max_int ]) ])
 ;;
 
-let intGen = arb_int.gen (* Gen.small_int *)
+let float_gen =
+  Gen.frequency
+    [ (5, Gen.float);
+      ( 5,
+        Gen.oneofl
+          [ Float.nan;
+            Float.neg_infinity;
+            min_float;
+            -1.;
+            -0.;
+            0.;
+            Float.epsilon;
+            1.;
+            max_float;
+            Float.infinity
+          ] )
+    ]
+;;
 
 (* Type-directed literal generator *)
 let rec literalGen t eff size =
   match t with
   | Unit -> Gen.return LitUnit
-  | Int -> Gen.map (fun i -> LitInt i) intGen
-  | Float -> Gen.map (fun f -> LitFloat f) Gen.float
+  | Int -> Gen.map (fun i -> LitInt i) int_gen
+  | Float -> Gen.map (fun f -> LitFloat f) float_gen
   | Bool -> Gen.map (fun b -> LitBool b) Gen.bool
   | String -> Gen.map (fun s -> LitStr s) stringGen
   | List (Typevar _) -> Gen.return (LitList [])
