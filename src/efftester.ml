@@ -173,7 +173,7 @@ let efftostr ((ef, ev) : eff) = Printf.sprintf "(%B,%B)" ef ev
 let toOCaml ?(typeannot = true) term =
   let rec littoOcamlSB sb = function
     | LitUnit -> Printf.bprintf sb "()"
-    | LitInt i -> if i <= 0 then Printf.bprintf sb "(%d)" i else Printf.bprintf sb "%d" i
+    | LitInt i -> if i < 0 then Printf.bprintf sb "(%d)" i else Printf.bprintf sb "%d" i
     | LitFloat f ->
       if f <= 0. then Printf.bprintf sb "(%F)" f else Printf.bprintf sb "%F" f
     (* We want parentheses when f equals (-0.);
