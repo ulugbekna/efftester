@@ -16,7 +16,7 @@ let write_prog src filename =
 ;;
 
 let run srcfile compil_filename compil_comm =
-  let exefile = "testdir/" ^ compil_filename in
+  let exefile = "generated_tests/" ^ compil_filename in
   let exitcode = Sys.command (compil_comm ^ " " ^ srcfile ^ " -o " ^ exefile) in
   (* Check that compilation was successful *)
   if exitcode <> 0
@@ -31,7 +31,7 @@ let run srcfile compil_filename compil_comm =
 
 let nativeByteEquivalence (*printFunction*) src =
   (* Write OCaml source to file *)
-  let file = "testdir/test.ml" in
+  let file = "generated_tests/test.ml" in
   let () = write_prog src file in
   let ncode, nout = run file "native" "ocamlopt -O3 -w -5-26" in
   (* -w -5@20-26 *)
@@ -1509,7 +1509,7 @@ let ocaml_test =
              print_string ".";
              flush stdout
            in
-           let file = "testdir/ocamltest.ml" in
+           let file = "generated_tests/ocamltest.ml" in
            let () = write_prog (toOCaml t) file in
            0 = Sys.command ("ocamlc -w -5@20-26 " ^ file)
          with Failure _ -> false))
