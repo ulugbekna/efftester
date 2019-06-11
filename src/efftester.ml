@@ -479,468 +479,6 @@ let lookupReturn s (env, _, returnEnv) =
   VarSet.union concreteSet polySet
 ;;
 
-(** Generators *)
-
-let a_code = int_of_char 'a'
-let z_code = int_of_char 'z'
-let alphaGen = Gen.map char_of_int (Gen.int_range a_code z_code)
-let varGen = Gen.map (String.make 1) alphaGen
-let stringGen = Gen.small_string ~gen:alphaGen
-let stringToString s = "\"" ^ s ^ "\""
-let sqrt i = int_of_float (Pervasives.sqrt (float_of_int i))
-
-let int_gen =
-  Gen.(
-    frequency [ (10, small_int); (5, int); (1, oneofl [ min_int; -1; 0; 1; max_int ]) ])
-;;
-
-let float_gen =
-  Gen.frequency
-    [ (5, Gen.float);
-      ( 5,
-        Gen.oneofl
-          [ Float.nan;
-            Float.neg_infinity;
-            min_float;
-            -1.;
-            -0.;
-            0.;
-            Float.epsilon;
-            1.;
-            max_float;
-            Float.infinity
-          ] )
-    ]
-;;
-
-(* Type-directed literal generator *)
-let rec literalGen t eff size =
-  match t with
-  | Unit -> Gen.return LitUnit
-  | Int -> Gen.map (fun i -> LitInt i) int_gen
-  | Float -> Gen.map (fun f -> LitFloat f) float_gen
-  | Bool -> Gen.map (fun b -> LitBool b) Gen.bool
-  | String -> Gen.map (fun s -> LitStr s) stringGen
-  | List (Typevar _) -> Gen.return (LitList [])
-  | List t ->
-    if size = 0
-    then Gen.return (LitList [])
-    else
-      Gen.map
-        (fun ls -> LitList ls)
-        (Gen.list_size (Gen.int_bound (sqrt size)) (literalGen t eff (sqrt size)))
-  (*     (Gen.list_size (Gen.int_bound (size/2)) (literalGen t eff (size/2))) *)
-  (* FIXME: - one element should/can have effect, if 'eff' allows *)
-  (*        - list items should be able to contain arbitrary effectful exps *)
-  | Typevar _ -> failwith "literalGen: typevar arg. should not happen"
-  | Fun _ -> failwith "literalGen: funtype arg. should not happen"
-;;
-
-let effGen = Gen.oneofl [ (false, false); (true, false) ]
-
-let typeGen =
-  (* Generates ground types (sans type variables) *)
-  Gen.fix (fun recgen n ->
-      let base_types = [ Unit; Int; Float; Bool; String ] in
-      if n = 0
-      then Gen.oneofl base_types
-      else
-        Gen.frequency
-          [ (* Generate no alphas *)
-            (4, Gen.oneofl base_types);
-            (1, Gen.map (fun t -> List t) (recgen (n / 2)));
-            ( 1,
-              Gen.map3
-                (fun t e t' -> Fun (t, e, t'))
-                (recgen (n / 2))
-                effGen
-                (recgen (n / 2)) )
-          ])
-;;
-
-(* Sized generator of variables according to the LIT rule
-   @param env  : surrounding environment
-   @param s    : desired goal type
-   @param eff  : desired effect
-   @param size : size parameter
-
-   --------------------- (LIT)
-       env |- l : s
-*)
-let litRules _env s eff size =
-  let rec listOfFun = function
-    | List s -> listOfFun s
-    | Fun _ -> true
-    | _ -> false
-  in
-  match s with
-  | List s when listOfFun s -> []
-  | Unit | Int | Float | Bool | String | List _ ->
-    [ (6, Gen.map (fun l -> Some (Lit l)) (literalGen s eff size)) ]
-  | Fun _ | Typevar _ -> []
-;;
-
-(* Sized generator of variables according to the VAR rule
-   @param env  : surrounding environment
-   @param s    : desired goal type
-   @param eff  : desired effect
-   @param size : size parameter
-
-      (t:s) \in env
-   --------------------- (VAR)
-       env |- t : s
-*)
-let varRules env s _eff _size =
-  (* vars have no immediate effect, so 'eff' param is ignored *)
-  let candvars = VarSet.elements (lookupType (normalize_eff s) env) in
-  let arity_s = arity s in
-  let candvars' =
-    List.filter
-      (fun x ->
-        match lookupVar x env with
-        | Some t -> arity t = arity_s && types_compat t s
-        | None -> failwith ("varRules: found variable " ^ x ^ " without associated type")
-        )
-      candvars
-  in
-  List.map (fun var -> (1, Gen.return (Some (Variable (s, var))))) candvars'
-;;
-
-(* Sized generator of lambda terms according to the LAM rule
-   @param env  : surrounding environment
-   @param u    : desired goal type
-   @param eff  : desired effect
-   @param size : size parameter
-
-               (x:s), env |- m : t
-    -------------------------------------------- (LAM)
-       env |- (fun (x:s) -> m) : s -> t
-*)
-let rec lamRules env u _eff size =
-  (* lams have no immediate effect, so 'eff' param is ignored *)
-  let gen s eff t =
-    Gen.(
-      varGen >>= fun x ->
-      listPermuteTermGenOuter (addVar x s env) t eff (size / 2) >>= function
-      | None -> return None
-      | Some m ->
-        let myeff = imm_eff m in
-        return (Some (Lambda (Fun (s, myeff, imm_type m), x, s, m))))
-  in
-  match u with
-  | Unit | Int | Float | Bool | String | List _ | Typevar _ -> []
-  | Fun (s, e, t) -> [ (8, gen s e t) ]
-
-(* Sized generator of applications (calls) according to the APP rule
-   @param env  : surrounding environment
-   @param t    : desired goal type
-   @param eff  : desired effect
-   @param size : size parameter
-
-       env |- f : s -> t     env |- x : s
-    ---------------------------------------- (APP)
-                 env |- f x : t
-*)
-and appRules env t eff size =
-  let open Gen in
-  let fromType funeff argeff s =
-    listPermuteTermGenOuter env (Fun (s, eff, t)) funeff (size / 2) >>= function
-    | None -> Gen.return None
-    | Some f ->
-      listPermuteTermGenOuter env s argeff (size / 2) >>= function
-      | None -> Gen.return None
-      | Some x ->
-        (match imm_type f with
-        | Fun (_, e, frange) ->
-          let funeff = imm_eff f in
-          let argeff = imm_eff x in
-          let ef, ev = eff_join e (eff_join funeff argeff) in
-          let eff' = (ef, ev || (fst funeff && fst argeff)) in
-          if eff_leq eff' eff
-          then Gen.return (Some (App (frange, f, imm_type x, x, eff')))
-          else
-            (*Gen.return None*)
-            failwith "appRules generated application with too big effect"
-        | _ ->
-          failwith
-            ("appRules generated application with non-function  "
-            ^ " t is "
-            ^ typetostr ~effannot:true t
-            ^ " f is "
-            ^ toOCaml ~typeannot:false f
-            ^ " imm_type f is "
-            ^ typetostr ~effannot:true (imm_type f)))
-  in
-  (* May generate eff in either operator or operand *)
-  [ (4, typeGen (size / 2) >>= fromType eff no_eff);
-    (4, typeGen (size / 2) >>= fromType no_eff eff)
-  ]
-
-(* Sized generator of multi-argument applications (calls) according to the INDIR rule
-   @param env  : surrounding environment
-   @param t    : desired goal type
-   @param eff  : desired effect
-   @param size : size parameter
-
-     (f : rho1 -> ... -> rhon -> t) in env     env |- m1 : rho1  ...  env |- mn : rhon
-   ------------------------------------------------------------------------------------- (INDIR)
-                                  env |- f m1 ... mn : t
-*)
-and indirRules env t eff size =
-  let mgu s t =
-    let rec loop = function
-      | [] -> None
-      | r :: rs ->
-        (match unify r t with
-        | Sol u -> Some u
-        | No_sol -> loop rs)
-    in
-    loop (returnTypes s)
-  in
-  let rec getArgTypes s t =
-    match s with
-    | s when types_compat s t -> []
-    | Fun (s', _, t') -> s' :: getArgTypes t' t
-    | s ->
-      failwith
-        ("getArgTypes: should not happen  s is "
-        ^ typetostr ~effannot:true s
-        ^ " t is "
-        ^ typetostr ~effannot:true t)
-  in
-  (* returns the index of the first effect - or else the number of arguments *)
-  let rec first_eff = function
-    | s when types_compat s t || types_compat t s -> 0
-    | Fun (_, e, t) -> if e = no_eff then 1 + first_eff t else 1
-    | s -> failwith ("first_eff: should not happen  " ^ typetostr ~effannot:true s)
-  in
-  (* recursively build application term argument by argument *)
-  let rec apply term rType n effacc = function
-    | [] -> Gen.return (Some term)
-    | arg :: args ->
-      (* arg 'n' may have effect 'eff' *)
-      let myeff = if n = 0 then eff else no_eff in
-      Gen.( >>= )
-        (listPermuteTermGenOuter env arg myeff (size / 2))
-        (function
-          | None -> Gen.return None
-          | Some a ->
-            (match rType with
-            | Fun (_, funeff, newRType) ->
-              let my_actual_eff = eff_join funeff (imm_eff a) in
-              (* actual effect *)
-              let effacc' = eff_join my_actual_eff effacc in
-              if eff_leq effacc' eff
-              then
-                apply
-                  (App (newRType, term, imm_type a, a, effacc'))
-                  newRType
-                  (n - 1)
-                  effacc'
-                  args
-              else
-                failwith
-                  "apply: overly effectful program generated. This should not happen."
-            | _ ->
-              failwith
-                "apply: non-function type expecting argument. This should not happen"))
-  in
-  let application s f =
-    (* s is the unnormalized, effect-full type *)
-    let fTerm = Variable (s, f) in
-    match mgu s t with
-    | None ->
-      failwith
-        ("indirRules, application: the return types of chosen variable "
-        ^ f
-        ^ ":"
-        ^ typetostr ~effannot:true s
-        ^ " do not match goal type "
-        ^ typetostr ~effannot:true t)
-    | Some sub ->
-      (* goal type and candidate unify with some subst *)
-      let goal_type = subst sub s in
-      (* goal type may have free variables, which we need to inst. *)
-      let ftvs = ftv goal_type in
-      let rec build_subst vs =
-        match vs with
-        | [] -> Gen.return []
-        | v :: vs ->
-          Gen.map2 (fun sub t -> (v, t) :: sub) (build_subst vs) (typeGen (sqrt size))
-      in
-      Gen.( >>= ) (build_subst ftvs) (fun sub' ->
-          let goal_type = subst sub' goal_type in
-          let argTypes =
-            try getArgTypes goal_type (subst sub t)
-            with Failure exc ->
-              print_endline ("s is " ^ typetostr ~effannot:true s);
-              print_endline
-                ("sub is "
-                ^ Print.list
-                    (Print.pair
-                       (fun id -> "'a" ^ string_of_int id)
-                       (typetostr ~effannot:true))
-                    sub);
-              print_endline ("(subst sub s) is " ^ typetostr ~effannot:true (subst sub s));
-              print_endline ("t is " ^ typetostr ~effannot:true t);
-              failwith exc
-          in
-          let first_eff_index = first_eff goal_type in
-          Gen.(
-            (if first_eff_index = 0 then return 0 else int_bound (first_eff_index - 1))
-            >>= fun n -> apply fTerm goal_type n no_eff argTypes))
-  in
-  let normalized_t = normalize_eff t in
-  let suitableVariables = lookupReturn normalized_t env in
-  (* this returns a set of cand. sans effects *)
-  let f_type_map =
-    let rec acc_rt_and_effect eff ty =
-      (* check that all effects are leq eff and that rt is compat *)
-      (if types_compat (normalize_eff ty) normalized_t
-          (* (sans effects) types agree here *)
-      then types_compat ty t
-      else true)
-      &&
-      match ty with
-      | Fun (_, e, ty') -> eff_leq e eff && acc_rt_and_effect eff ty'
-      | _ -> true
-    in
-    (* there may be several variables with the same type *)
-    VarSet.fold
-      (fun f acc ->
-        match lookupVar f env with
-        | Some ty ->
-          (match mgu ty t with
-          (* some rt of receiver (sans effects) matches here *)
-          | None ->
-            failwith "f_type_pairs: couldn't find a subst, which should not happen"
-          | Some sub ->
-            let ty' = subst sub ty in
-            (* receiver may have poly type, which is too effectful when inst *)
-            if acc_rt_and_effect eff ty' then addMultiMap ty f acc else acc)
-        | None -> failwith "f_type_pairs: lookupVar failed, which should not happen")
-      suitableVariables
-      TypeMap.empty
-  in
-  TypeMap.fold
-    (fun s fs acc ->
-      (4, Gen.( >>= ) (Gen.oneofl (VarSet.elements fs)) (application s)) :: acc)
-    f_type_map
-    []
-
-(* Sized generator of let according to the LET rule
-   @param env  : surrounding environment
-   @param t    : desired goal type
-   @param eff  : desired effect
-   @param size : size parameter
-
-       env |- m : s     env, (x:s) |- n : t
-    ------------------------------------------ (LET)
-           env |- let x:s = m in n : t
-*)
-and letRules env t eff size =
-  let open Gen in
-  let fromType s =
-    varGen >>= fun x ->
-    listPermuteTermGenOuter env s eff (size / 2) >>= function
-    | None -> return None
-    | Some m ->
-      listPermuteTermGenOuter (addVar x s env) t eff (size / 2) >>= function
-      | None -> return None
-      | Some n ->
-        let myeff = eff_join (imm_eff m) (imm_eff n) in
-        return (Some (Let (x, s, m, n, imm_type n, myeff)))
-  in
-  [ (6, typeGen (size / 2) >>= fromType) ]
-
-and ifRules env t eff size =
-  let open Gen in
-  let gen =
-    listPermuteTermGenOuter env Bool eff (size / 3) >>= function
-    | None -> return None
-    | Some b ->
-      listPermuteTermGenOuter env t eff (size / 3) >>= function
-      | None -> return None
-      | Some m ->
-        let then_type = imm_type m in
-        (match unify then_type t with
-        | No_sol ->
-          failwith
-            ("ifRules: generated type "
-            ^ typetostr ~effannot:true then_type
-            ^ " in then branch does not unify with goal type "
-            ^ typetostr ~effannot:true t)
-        | Sol sub ->
-          let subst_t = subst sub t in
-          listPermuteTermGenOuter env subst_t eff (size / 3) >>= function
-          | None -> return None
-          | Some n ->
-            let else_type = imm_type n in
-            (match unify else_type subst_t with
-            | No_sol ->
-              failwith
-                ("ifRules: generated else branch type "
-                ^ typetostr ~effannot:true else_type
-                ^ " does not unify with subst goal type "
-                ^ typetostr ~effannot:true subst_t)
-            | Sol sub' ->
-              let mytype = subst sub' subst_t in
-              let myeff = eff_join (imm_eff b) (eff_join (imm_eff m) (imm_eff n)) in
-              return (Some (If (mytype, b, m, n, myeff)))))
-  in
-  [ (3, gen) ]
-
-and listPermuteTermGenInner env goal size rules =
-  let rec removeAt n xs =
-    match (n, xs) with
-    | 0, _ :: xs -> xs
-    | n, x :: xs -> x :: removeAt (n - 1) xs
-    | _ -> failwith "index out of bounds"
-  in
-  let elementsWeighted xs =
-    let _, ig =
-      List.fold_left
-        (fun (i, acc) (w, g) -> (i + 1, (w, Gen.pair (Gen.return i) g) :: acc))
-        (0, [])
-        xs
-    in
-    Gen.frequency ig
-  in
-  let toTerm i = function
-    | Some term -> Gen.return (Some term)
-    | None ->
-      let remainingRules = removeAt i rules in
-      listPermuteTermGenInner env goal size remainingRules
-  in
-  if rules = []
-  then Gen.return None
-  else Gen.(elementsWeighted rules >>= fun (i, t) -> toTerm i t)
-
-and listPermuteTermGenOuter env goal eff size =
-  if size = 0
-  then (
-    let rules = List.concat [ litRules env goal eff size; varRules env goal eff size ] in
-    listPermuteTermGenInner env goal size rules)
-  else (
-    let rules =
-      List.concat
-        [ litRules env goal eff size;
-          (*varRules env goal eff size;*)
-          (* var rule is covered by indir with no args *)
-          appRules env goal eff size;
-          lamRules env goal eff size;
-          indirRules env goal eff size;
-          letRules env goal eff size;
-          ifRules env goal eff size
-        ]
-    in
-    listPermuteTermGenInner env goal size rules)
-;;
-
-let listPermuteTermGenRecWrapper env goal eff =
-  Gen.sized (listPermuteTermGenOuter env goal eff)
-;;
-
 (** Initial environment *)
 
 let initTriEnv =
@@ -1064,124 +602,653 @@ let initTriEnv =
     ]
 ;;
 
+(** Generators *)
+
+(* Provides operations over a local cache that is used by a generator  *)
+let new_cache () =
+  let cache = ref [] in
+  let to_cache fl = cache := fl :: !cache in
+  let get_cache_lst () = !cache in
+  let clear_cache () = cache := [] in
+  (to_cache, get_cache_lst, clear_cache)
+;;
+
+let float_gen =
+  Gen.frequency
+    [ (5, Gen.float);
+      ( 5,
+        Gen.oneofl
+          [ Float.nan;
+            Float.neg_infinity;
+            min_float;
+            -1.;
+            -0.;
+            0.;
+            Float.epsilon;
+            1.;
+            max_float;
+            Float.infinity
+          ] )
+    ]
+;;
+
+(* Generate a possibly repeated floating-point number *)
+let float_gen_with_rep_thunk () =
+  let to_cache, get_cache_lst, _ = new_cache () in
+  let from_cache_gen rs = (Gen.oneofl @@ get_cache_lst ()) rs in
+  fun rs ->
+    match get_cache_lst () with
+    | [] ->
+      Gen.map
+        (fun fl ->
+          to_cache fl;
+          fl)
+        float_gen
+        rs
+    | _xs ->
+      Gen.map
+        (fun fl ->
+          if List.mem fl (get_cache_lst ())
+          then fl
+          else (
+            to_cache fl;
+            fl))
+        (Gen.oneof [ float_gen; from_cache_gen ])
+        rs
+;;
+
+(** {!Context} is used to store the state of generators *)
+module type Context = sig
+  (** stateful float generator with value repetitions *)
+  val float_gen_with_rep : float Gen.t
+end
+
+module FreshContext () : Context = struct
+  let float_gen_with_rep = float_gen_with_rep_thunk ()
+end
+
+module Generators (Ctx : Context) = struct
+  let alphaGen =
+    let a_code = int_of_char 'a' in
+    let z_code = int_of_char 'z' in
+    Gen.map char_of_int (Gen.int_range a_code z_code)
+  ;;
+
+  let varGen = Gen.map (String.make 1) alphaGen
+  let stringGen = Gen.small_string ~gen:alphaGen
+  let stringToString s = "\"" ^ s ^ "\""
+  let sqrt i = int_of_float (Pervasives.sqrt (float_of_int i))
+
+  let int_gen =
+    Gen.(
+      frequency [ (10, small_int); (5, int); (1, oneofl [ min_int; -1; 0; 1; max_int ]) ])
+  ;;
+
+  let float_gen = float_gen
+
+  (* Generate a possibly repeated floating-point number *)
+  let float_gen_with_rep_thunk = float_gen_with_rep_thunk
+
+  (* Type-directed literal generator *)
+  let rec literalGen t eff size =
+    match t with
+    | Unit -> Gen.return LitUnit
+    | Int -> Gen.map (fun i -> LitInt i) int_gen
+    | Float -> Gen.map (fun f -> LitFloat f) Ctx.float_gen_with_rep
+    | Bool -> Gen.map (fun b -> LitBool b) Gen.bool
+    | String -> Gen.map (fun s -> LitStr s) stringGen
+    | List (Typevar _) -> Gen.return (LitList [])
+    | List t ->
+      if size = 0
+      then Gen.return (LitList [])
+      else
+        Gen.map
+          (fun ls -> LitList ls)
+          (Gen.list_size (Gen.int_bound (sqrt size)) (literalGen t eff (sqrt size)))
+    (*     (Gen.list_size (Gen.int_bound (size/2)) (literalGen t eff (size/2))) *)
+    (* FIXME: - one element should/can have effect, if 'eff' allows *)
+    (*        - list items should be able to contain arbitrary effectful exps *)
+    | Typevar _ -> failwith "literalGen: typevar arg. should not happen"
+    | Fun _ -> failwith "literalGen: funtype arg. should not happen"
+  ;;
+
+  let effGen = Gen.oneofl [ (false, false); (true, false) ]
+
+  let typeGen =
+    (* Generates ground types (sans type variables) *)
+    Gen.fix (fun recgen n ->
+        let base_types = [ Unit; Int; Float; Bool; String ] in
+        if n = 0
+        then Gen.oneofl base_types
+        else
+          Gen.frequency
+            [ (* Generate no alphas *)
+              (4, Gen.oneofl base_types);
+              (1, Gen.map (fun t -> List t) (recgen (n / 2)));
+              ( 1,
+                Gen.map3
+                  (fun t e t' -> Fun (t, e, t'))
+                  (recgen (n / 2))
+                  effGen
+                  (recgen (n / 2)) )
+            ])
+  ;;
+
+  (* Sized generator of variables according to the LIT rule
+   @param env  : surrounding environment
+   @param s    : desired goal type
+   @param eff  : desired effect
+   @param size : size parameter
+
+   --------------------- (LIT)
+       env |- l : s
+*)
+  let litRules _env s eff size =
+    let rec listOfFun = function
+      | List s -> listOfFun s
+      | Fun _ -> true
+      | _ -> false
+    in
+    match s with
+    | List s when listOfFun s -> []
+    | Unit | Int | Float | Bool | String | List _ ->
+      [ (6, Gen.map (fun l -> Some (Lit l)) (literalGen s eff size)) ]
+    | Fun _ | Typevar _ -> []
+  ;;
+
+  (* Sized generator of variables according to the VAR rule
+   @param env  : surrounding environment
+   @param s    : desired goal type
+   @param eff  : desired effect
+   @param size : size parameter
+
+      (t:s) \in env
+   --------------------- (VAR)
+       env |- t : s
+*)
+  let varRules env s _eff _size =
+    (* vars have no immediate effect, so 'eff' param is ignored *)
+    let candvars = VarSet.elements (lookupType (normalize_eff s) env) in
+    let arity_s = arity s in
+    let candvars' =
+      List.filter
+        (fun x ->
+          match lookupVar x env with
+          | Some t -> arity t = arity_s && types_compat t s
+          | None ->
+            failwith ("varRules: found variable " ^ x ^ " without associated type"))
+        candvars
+    in
+    List.map (fun var -> (1, Gen.return (Some (Variable (s, var))))) candvars'
+  ;;
+
+  (* Sized generator of lambda terms according to the LAM rule
+   @param env  : surrounding environment
+   @param u    : desired goal type
+   @param eff  : desired effect
+   @param size : size parameter
+
+               (x:s), env |- m : t
+    -------------------------------------------- (LAM)
+       env |- (fun (x:s) -> m) : s -> t
+*)
+  let rec lamRules env u _eff size =
+    (* lams have no immediate effect, so 'eff' param is ignored *)
+    let gen s eff t =
+      Gen.(
+        varGen >>= fun x ->
+        listPermuteTermGenOuter (addVar x s env) t eff (size / 2) >>= function
+        | None -> return None
+        | Some m ->
+          let myeff = imm_eff m in
+          return (Some (Lambda (Fun (s, myeff, imm_type m), x, s, m))))
+    in
+    match u with
+    | Unit | Int | Float | Bool | String | List _ | Typevar _ -> []
+    | Fun (s, e, t) -> [ (8, gen s e t) ]
+
+  (* Sized generator of applications (calls) according to the APP rule
+   @param env  : surrounding environment
+   @param t    : desired goal type
+   @param eff  : desired effect
+   @param size : size parameter
+
+       env |- f : s -> t     env |- x : s
+    ---------------------------------------- (APP)
+                 env |- f x : t
+*)
+  and appRules env t eff size =
+    let open Gen in
+    let fromType funeff argeff s =
+      listPermuteTermGenOuter env (Fun (s, eff, t)) funeff (size / 2) >>= function
+      | None -> Gen.return None
+      | Some f ->
+        listPermuteTermGenOuter env s argeff (size / 2) >>= function
+        | None -> Gen.return None
+        | Some x ->
+          (match imm_type f with
+          | Fun (_, e, frange) ->
+            let funeff = imm_eff f in
+            let argeff = imm_eff x in
+            let ef, ev = eff_join e (eff_join funeff argeff) in
+            let eff' = (ef, ev || (fst funeff && fst argeff)) in
+            if eff_leq eff' eff
+            then Gen.return (Some (App (frange, f, imm_type x, x, eff')))
+            else
+              (*Gen.return None*)
+              failwith "appRules generated application with too big effect"
+          | _ ->
+            failwith
+              ("appRules generated application with non-function  "
+              ^ " t is "
+              ^ typetostr ~effannot:true t
+              ^ " f is "
+              ^ toOCaml ~typeannot:false f
+              ^ " imm_type f is "
+              ^ typetostr ~effannot:true (imm_type f)))
+    in
+    (* May generate eff in either operator or operand *)
+    [ (4, typeGen (size / 2) >>= fromType eff no_eff);
+      (4, typeGen (size / 2) >>= fromType no_eff eff)
+    ]
+
+  (* Sized generator of multi-argument applications (calls) according to the INDIR rule
+   @param env  : surrounding environment
+   @param t    : desired goal type
+   @param eff  : desired effect
+   @param size : size parameter
+
+     (f : rho1 -> ... -> rhon -> t) in env     env |- m1 : rho1  ...  env |- mn : rhon
+   ------------------------------------------------------------------------------------- (INDIR)
+                                  env |- f m1 ... mn : t
+*)
+  and indirRules env t eff size =
+    let mgu s t =
+      let rec loop = function
+        | [] -> None
+        | r :: rs ->
+          (match unify r t with
+          | Sol u -> Some u
+          | No_sol -> loop rs)
+      in
+      loop (returnTypes s)
+    in
+    let rec getArgTypes s t =
+      match s with
+      | s when types_compat s t -> []
+      | Fun (s', _, t') -> s' :: getArgTypes t' t
+      | s ->
+        failwith
+          ("getArgTypes: should not happen  s is "
+          ^ typetostr ~effannot:true s
+          ^ " t is "
+          ^ typetostr ~effannot:true t)
+    in
+    (* returns the index of the first effect - or else the number of arguments *)
+    let rec first_eff = function
+      | s when types_compat s t || types_compat t s -> 0
+      | Fun (_, e, t) -> if e = no_eff then 1 + first_eff t else 1
+      | s -> failwith ("first_eff: should not happen  " ^ typetostr ~effannot:true s)
+    in
+    (* recursively build application term argument by argument *)
+    let rec apply term rType n effacc = function
+      | [] -> Gen.return (Some term)
+      | arg :: args ->
+        (* arg 'n' may have effect 'eff' *)
+        let myeff = if n = 0 then eff else no_eff in
+        Gen.( >>= )
+          (listPermuteTermGenOuter env arg myeff (size / 2))
+          (function
+            | None -> Gen.return None
+            | Some a ->
+              (match rType with
+              | Fun (_, funeff, newRType) ->
+                let my_actual_eff = eff_join funeff (imm_eff a) in
+                (* actual effect *)
+                let effacc' = eff_join my_actual_eff effacc in
+                if eff_leq effacc' eff
+                then
+                  apply
+                    (App (newRType, term, imm_type a, a, effacc'))
+                    newRType
+                    (n - 1)
+                    effacc'
+                    args
+                else
+                  failwith
+                    "apply: overly effectful program generated. This should not happen."
+              | _ ->
+                failwith
+                  "apply: non-function type expecting argument. This should not happen")
+            )
+    in
+    let application s f =
+      (* s is the unnormalized, effect-full type *)
+      let fTerm = Variable (s, f) in
+      match mgu s t with
+      | None ->
+        failwith
+          ("indirRules, application: the return types of chosen variable "
+          ^ f
+          ^ ":"
+          ^ typetostr ~effannot:true s
+          ^ " do not match goal type "
+          ^ typetostr ~effannot:true t)
+      | Some sub ->
+        (* goal type and candidate unify with some subst *)
+        let goal_type = subst sub s in
+        (* goal type may have free variables, which we need to inst. *)
+        let ftvs = ftv goal_type in
+        let rec build_subst vs =
+          match vs with
+          | [] -> Gen.return []
+          | v :: vs ->
+            Gen.map2 (fun sub t -> (v, t) :: sub) (build_subst vs) (typeGen (sqrt size))
+        in
+        Gen.( >>= ) (build_subst ftvs) (fun sub' ->
+            let goal_type = subst sub' goal_type in
+            let argTypes =
+              try getArgTypes goal_type (subst sub t)
+              with Failure exc ->
+                print_endline ("s is " ^ typetostr ~effannot:true s);
+                print_endline
+                  ("sub is "
+                  ^ Print.list
+                      (Print.pair
+                         (fun id -> "'a" ^ string_of_int id)
+                         (typetostr ~effannot:true))
+                      sub);
+                print_endline
+                  ("(subst sub s) is " ^ typetostr ~effannot:true (subst sub s));
+                print_endline ("t is " ^ typetostr ~effannot:true t);
+                failwith exc
+            in
+            let first_eff_index = first_eff goal_type in
+            Gen.(
+              (if first_eff_index = 0 then return 0 else int_bound (first_eff_index - 1))
+              >>= fun n -> apply fTerm goal_type n no_eff argTypes))
+    in
+    let normalized_t = normalize_eff t in
+    let suitableVariables = lookupReturn normalized_t env in
+    (* this returns a set of cand. sans effects *)
+    let f_type_map =
+      let rec acc_rt_and_effect eff ty =
+        (* check that all effects are leq eff and that rt is compat *)
+        (if types_compat (normalize_eff ty) normalized_t
+            (* (sans effects) types agree here *)
+        then types_compat ty t
+        else true)
+        &&
+        match ty with
+        | Fun (_, e, ty') -> eff_leq e eff && acc_rt_and_effect eff ty'
+        | _ -> true
+      in
+      (* there may be several variables with the same type *)
+      VarSet.fold
+        (fun f acc ->
+          match lookupVar f env with
+          | Some ty ->
+            (match mgu ty t with
+            (* some rt of receiver (sans effects) matches here *)
+            | None ->
+              failwith "f_type_pairs: couldn't find a subst, which should not happen"
+            | Some sub ->
+              let ty' = subst sub ty in
+              (* receiver may have poly type, which is too effectful when inst *)
+              if acc_rt_and_effect eff ty' then addMultiMap ty f acc else acc)
+          | None -> failwith "f_type_pairs: lookupVar failed, which should not happen")
+        suitableVariables
+        TypeMap.empty
+    in
+    TypeMap.fold
+      (fun s fs acc ->
+        (4, Gen.( >>= ) (Gen.oneofl (VarSet.elements fs)) (application s)) :: acc)
+      f_type_map
+      []
+
+  (* Sized generator of let according to the LET rule
+   @param env  : surrounding environment
+   @param t    : desired goal type
+   @param eff  : desired effect
+   @param size : size parameter
+
+       env |- m : s     env, (x:s) |- n : t
+    ------------------------------------------ (LET)
+           env |- let x:s = m in n : t
+*)
+  and letRules env t eff size =
+    let open Gen in
+    let fromType s =
+      varGen >>= fun x ->
+      listPermuteTermGenOuter env s eff (size / 2) >>= function
+      | None -> return None
+      | Some m ->
+        listPermuteTermGenOuter (addVar x s env) t eff (size / 2) >>= function
+        | None -> return None
+        | Some n ->
+          let myeff = eff_join (imm_eff m) (imm_eff n) in
+          return (Some (Let (x, s, m, n, imm_type n, myeff)))
+    in
+    [ (6, typeGen (size / 2) >>= fromType) ]
+
+  and ifRules env t eff size =
+    let open Gen in
+    let gen =
+      listPermuteTermGenOuter env Bool eff (size / 3) >>= function
+      | None -> return None
+      | Some b ->
+        listPermuteTermGenOuter env t eff (size / 3) >>= function
+        | None -> return None
+        | Some m ->
+          let then_type = imm_type m in
+          (match unify then_type t with
+          | No_sol ->
+            failwith
+              ("ifRules: generated type "
+              ^ typetostr ~effannot:true then_type
+              ^ " in then branch does not unify with goal type "
+              ^ typetostr ~effannot:true t)
+          | Sol sub ->
+            let subst_t = subst sub t in
+            listPermuteTermGenOuter env subst_t eff (size / 3) >>= function
+            | None -> return None
+            | Some n ->
+              let else_type = imm_type n in
+              (match unify else_type subst_t with
+              | No_sol ->
+                failwith
+                  ("ifRules: generated else branch type "
+                  ^ typetostr ~effannot:true else_type
+                  ^ " does not unify with subst goal type "
+                  ^ typetostr ~effannot:true subst_t)
+              | Sol sub' ->
+                let mytype = subst sub' subst_t in
+                let myeff = eff_join (imm_eff b) (eff_join (imm_eff m) (imm_eff n)) in
+                return (Some (If (mytype, b, m, n, myeff)))))
+    in
+    [ (3, gen) ]
+
+  and listPermuteTermGenInner env goal size rules =
+    let rec removeAt n xs =
+      match (n, xs) with
+      | 0, _ :: xs -> xs
+      | n, x :: xs -> x :: removeAt (n - 1) xs
+      | _ -> failwith "index out of bounds"
+    in
+    let elementsWeighted xs =
+      let _, ig =
+        List.fold_left
+          (fun (i, acc) (w, g) -> (i + 1, (w, Gen.pair (Gen.return i) g) :: acc))
+          (0, [])
+          xs
+      in
+      Gen.frequency ig
+    in
+    let toTerm i = function
+      | Some term -> Gen.return (Some term)
+      | None ->
+        let remainingRules = removeAt i rules in
+        listPermuteTermGenInner env goal size remainingRules
+    in
+    if rules = []
+    then Gen.return None
+    else Gen.(elementsWeighted rules >>= fun (i, t) -> toTerm i t)
+
+  and listPermuteTermGenOuter env goal eff size =
+    if size = 0
+    then (
+      let rules =
+        List.concat [ litRules env goal eff size; varRules env goal eff size ]
+      in
+      listPermuteTermGenInner env goal size rules)
+    else (
+      let rules =
+        List.concat
+          [ litRules env goal eff size;
+            (*varRules env goal eff size;*)
+            (* var rule is covered by indir with no args *)
+            appRules env goal eff size;
+            lamRules env goal eff size;
+            indirRules env goal eff size;
+            letRules env goal eff size;
+            ifRules env goal eff size
+          ]
+      in
+      listPermuteTermGenInner env goal size rules)
+  ;;
+
+  let listPermuteTermGenRecWrapper env goal eff =
+    Gen.sized (listPermuteTermGenOuter env goal eff)
+  ;;
+
+  (* TODO: Include more base types - requires also changing `printer_by_etype` *)
+  let basetype_gen = Gen.oneofl [ Int; Float; String ]
+  let term_gen = listPermuteTermGenRecWrapper initTriEnv
+end
+
 (** Shrinker and actual testing *)
 
-let createLit t =
-  let toTerm s = Some (Lit s) in
-  match t with
-  | Unit -> toTerm LitUnit
-  | Int -> toTerm (LitInt (Gen.generate1 small_int.gen))
-  | Float -> toTerm (LitFloat (Gen.generate1 float.gen))
-  | Bool -> toTerm (LitBool (Gen.generate1 bool.gen))
-  | String -> toTerm (LitStr (Gen.generate1 stringGen))
-  | List _ | Fun _ | Typevar _ -> None
-;;
+module Shrinker (Ctx : Context) = struct
+  module Gener = Generators (Ctx)
 
-(* determines whether x occurs free (outside a binding) in the arg. exp *)
-let rec fv x = function
-  | Lit _ -> false
-  | Variable (_, y) -> x = y
-  | Lambda (_, y, _, m) -> if x = y then false else fv x m
-  | App (_, m, _, n, _) -> fv x m || fv x n
-  | Let (y, _, m, n, _, _) -> fv x m || if x = y then false else fv x n
-  | If (_, b, m, n, _) -> fv x b || fv x m || fv x n
-;;
+  let createLit t =
+    let toTerm s = Some (Lit s) in
+    match t with
+    | Unit -> toTerm LitUnit
+    | Int -> toTerm (LitInt (Gen.generate1 small_int.gen))
+    | Float -> toTerm (LitFloat (Gen.generate1 float.gen))
+    | Bool -> toTerm (LitBool (Gen.generate1 bool.gen))
+    | String -> toTerm (LitStr (Gen.generate1 Gener.stringGen))
+    | List _ | Fun _ | Typevar _ -> None
+  ;;
 
-(* renames free occurrences of 'x' into 'y' *)
-let rec alpharename m x y =
-  match m with
-  | Lit _ -> m
-  | Variable (t, z) -> if x = z then Variable (t, y) else m
-  | Lambda (t, z, t', m') -> if x = z then m else Lambda (t, z, t', alpharename m' x y)
-  | App (rt, m, at, n, e) -> App (rt, alpharename m x y, at, alpharename n x y, e)
-  | Let (z, t, m, n, t', e) ->
-    let m' = alpharename m x y in
-    if x = z then Let (z, t, m', n, t', e) else Let (z, t, m', alpharename n x y, t', e)
-  | If (t, b, n, n', e) ->
-    If (t, alpharename b x y, alpharename n x y, alpharename n' x y, e)
-;;
+  (* determines whether x occurs free (outside a binding) in the arg. exp *)
+  let rec fv x = function
+    | Lit _ -> false
+    | Variable (_, y) -> x = y
+    | Lambda (_, y, _, m) -> if x = y then false else fv x m
+    | App (_, m, _, n, _) -> fv x m || fv x n
+    | Let (y, _, m, n, _, _) -> fv x m || if x = y then false else fv x n
+    | If (_, b, m, n, _) -> fv x b || fv x m || fv x n
+  ;;
 
-let shrinkLit = function
-  | LitInt i -> Iter.map (fun i' -> Lit (LitInt i')) (Shrink.int i)
-  (* TODO how to shrink floats? *)
-  | LitStr s -> Iter.map (fun s' -> Lit (LitStr s')) (Shrink.string s)
-  | LitList ls -> Iter.map (fun ls' -> Lit (LitList ls')) (Shrink.list ls)
-  | _ -> Iter.empty
-;;
+  (* renames free occurrences of 'x' into 'y' *)
+  let rec alpharename m x y =
+    match m with
+    | Lit _ -> m
+    | Variable (t, z) -> if x = z then Variable (t, y) else m
+    | Lambda (t, z, t', m') -> if x = z then m else Lambda (t, z, t', alpharename m' x y)
+    | App (rt, m, at, n, e) -> App (rt, alpharename m x y, at, alpharename n x y, e)
+    | Let (z, t, m, n, t', e) ->
+      let m' = alpharename m x y in
+      if x = z then Let (z, t, m', n, t', e) else Let (z, t, m', alpharename n x y, t', e)
+    | If (t, b, n, n', e) ->
+      If (t, alpharename b x y, alpharename n x y, alpharename n' x y, e)
+  ;;
 
-let ( <+> ) = Iter.( <+> )
+  let shrinkLit = function
+    | LitInt i -> Iter.map (fun i' -> Lit (LitInt i')) (Shrink.int i)
+    (* TODO how to shrink floats? *)
+    | LitStr s -> Iter.map (fun s' -> Lit (LitStr s')) (Shrink.string s)
+    | LitList ls -> Iter.map (fun ls' -> Lit (LitList ls')) (Shrink.list ls)
+    | _ -> Iter.empty
+  ;;
 
-let rec termShrinker term =
-  match term with
-  | Lit l -> shrinkLit l
-  | Variable (t, _) ->
-    (match createLit t with
-    | Some c -> Iter.return c
-    | _ -> Iter.empty)
-  | Lambda (t, x, s, m) -> Iter.map (fun m' -> Lambda (t, x, s, m')) (termShrinker m)
-  | App (rt, m, at, n, e) ->
-    (match createLit rt with
-    | Some c -> Iter.return c
-    | None -> Iter.empty)
-    <+> (if types_compat at rt then Iter.return n else Iter.empty)
-    <+> (match m with
-        | App (_, _, at', n', _) when types_compat at' rt -> Iter.return n'
-        | Lambda (_, x, s, m') ->
-          if fv x m'
-          then Iter.return (Let (x, s, n, m', rt, e))
-          else Iter.of_list [ m'; Let (x, s, n, m', rt, e) ]
-        | Let (x, t, m', n', _, _) ->
-          if fv x n
-          then (
-            (* potential var capt.*)
-            let x' = newvar () in
-            Iter.return (Let (x', t, m', App (rt, alpharename n' x x', at, n, e), rt, e)))
-          else Iter.return (Let (x, t, m', App (rt, n', at, n, e), rt, e))
-        | _ -> Iter.empty)
-    <+> Iter.map (fun m' -> App (rt, m', at, n, e)) (termShrinker m)
-    <+> Iter.map (fun n' -> App (rt, m, at, n', e)) (termShrinker n)
-  | Let (x, t, m, n, s, e) ->
-    (match createLit s with
-    | Some c -> Iter.return c
-    | _ -> Iter.empty)
-    <+> (match (fv x n, m) with
-        | false, Let (x', t', m', _, _, _) ->
-          if fv x' n
-          then (
-            (* potential var capt.*)
-            let y = newvar () in
-            Iter.of_list [ n; Let (y, t', m', n, s, e) ])
-          else Iter.of_list [ n; Let (x', t', m', n, s, e) ]
-        | false, _ -> Iter.return n
-        | true, _ -> Iter.empty)
-    <+> Iter.map (fun m' -> Let (x, t, m', n, s, e)) (termShrinker m)
-    <+> Iter.map (fun n' -> Let (x, t, m, n', s, e)) (termShrinker n)
-  | If (t, b, m, n, e) ->
-    (match createLit t with
-    | Some c -> Iter.return c
-    | _ -> Iter.empty)
-    <+> Iter.of_list [ n; m ]
-    <+> (match b with
-        | Lit _ -> Iter.empty
-        | Variable (_, _) -> Iter.empty
-        | _ ->
-          let x = newvar () in
-          Iter.return (Let (x, Bool, b, If (t, Variable (Bool, x), m, n, e), t, e)))
-    <+> Iter.map (fun b' -> If (t, b', m, n, e)) (termShrinker b)
-    <+> Iter.map (fun m' -> If (t, b, m', n, e)) (termShrinker m)
-    <+> Iter.map (fun n' -> If (t, b, m, n', e)) (termShrinker n)
-;;
+  let ( <+> ) = Iter.( <+> )
 
-let dep_term_shrinker (typ, term) = Iter.pair (Iter.return typ) (termShrinker term)
+  let rec termShrinker term =
+    match term with
+    | Lit l -> shrinkLit l
+    | Variable (t, _) ->
+      (match createLit t with
+      | Some c -> Iter.return c
+      | _ -> Iter.empty)
+    | Lambda (t, x, s, m) -> Iter.map (fun m' -> Lambda (t, x, s, m')) (termShrinker m)
+    | App (rt, m, at, n, e) ->
+      (match createLit rt with
+      | Some c -> Iter.return c
+      | None -> Iter.empty)
+      <+> (if types_compat at rt then Iter.return n else Iter.empty)
+      <+> (match m with
+          | App (_, _, at', n', _) when types_compat at' rt -> Iter.return n'
+          | Lambda (_, x, s, m') ->
+            if fv x m'
+            then Iter.return (Let (x, s, n, m', rt, e))
+            else Iter.of_list [ m'; Let (x, s, n, m', rt, e) ]
+          | Let (x, t, m', n', _, _) ->
+            if fv x n
+            then (
+              (* potential var capt.*)
+              let x' = newvar () in
+              Iter.return
+                (Let (x', t, m', App (rt, alpharename n' x x', at, n, e), rt, e)))
+            else Iter.return (Let (x, t, m', App (rt, n', at, n, e), rt, e))
+          | _ -> Iter.empty)
+      <+> Iter.map (fun m' -> App (rt, m', at, n, e)) (termShrinker m)
+      <+> Iter.map (fun n' -> App (rt, m, at, n', e)) (termShrinker n)
+    | Let (x, t, m, n, s, e) ->
+      (match createLit s with
+      | Some c -> Iter.return c
+      | _ -> Iter.empty)
+      <+> (match (fv x n, m) with
+          | false, Let (x', t', m', _, _, _) ->
+            if fv x' n
+            then (
+              (* potential var capt.*)
+              let y = newvar () in
+              Iter.of_list [ n; Let (y, t', m', n, s, e) ])
+            else Iter.of_list [ n; Let (x', t', m', n, s, e) ]
+          | false, _ -> Iter.return n
+          | true, _ -> Iter.empty)
+      <+> Iter.map (fun m' -> Let (x, t, m', n, s, e)) (termShrinker m)
+      <+> Iter.map (fun n' -> Let (x, t, m, n', s, e)) (termShrinker n)
+    | If (t, b, m, n, e) ->
+      (match createLit t with
+      | Some c -> Iter.return c
+      | _ -> Iter.empty)
+      <+> Iter.of_list [ n; m ]
+      <+> (match b with
+          | Lit _ -> Iter.empty
+          | Variable (_, _) -> Iter.empty
+          | _ ->
+            let x = newvar () in
+            Iter.return (Let (x, Bool, b, If (t, Variable (Bool, x), m, n, e), t, e)))
+      <+> Iter.map (fun b' -> If (t, b', m, n, e)) (termShrinker b)
+      <+> Iter.map (fun m' -> If (t, b, m', n, e)) (termShrinker m)
+      <+> Iter.map (fun n' -> If (t, b, m, n', e)) (termShrinker n)
+  ;;
 
-let wrapper shrinker opTerm =
-  match opTerm with
-  | None -> Iter.empty
-  | Some term -> Iter.map (fun t -> Some t) (shrinker term)
-;;
+  let dep_term_shrinker (typ, term) = Iter.pair (Iter.return typ) (termShrinker term)
 
-let shrinker term = wrapper termShrinker term
-let dep_term_shrinker dep_term = wrapper dep_term_shrinker dep_term
+  let wrapper shrinker opTerm =
+    match opTerm with
+    | None -> Iter.empty
+    | Some term -> Iter.map (fun t -> Some t) (shrinker term)
+  ;;
+
+  let shrinker term = wrapper termShrinker term
+  let dep_term_shrinker dep_term = wrapper dep_term_shrinker dep_term
+end
 
 (*
           (t:s) \in env
@@ -1439,56 +1506,60 @@ let rand_print_wrap typ trm =
       (true, false) )
 ;;
 
-(* TODO: Include more base types - requires also changing `printer_by_etype` *)
-let basetype_gen = Gen.oneofl [ Int; Float; String ]
-let term_gen typ eff = listPermuteTermGenRecWrapper initTriEnv typ eff
+module Arbitrary (Ctx : Context) = struct
+  module Gener = Generators (Ctx)
+  module Shrink = Shrinker (Ctx)
 
-(* TODO: Is it correct to name a function using suffix `_gen`
+  (* TODO: Is it correct to name a function using suffix `_gen`
           if it is of type `'a arbitrary`
-*)
-let term_gen_by_type typ =
-  make
-    ~print:(Print.option (toOCaml ~typeannot:false))
-    (*       ~shrink:shrinker *)
-    (term_gen typ (true, false))
-;;
+  *)
+  let term_gen_by_type typ =
+    make
+      ~print:(Print.option (toOCaml ~typeannot:false))
+      ~shrink:Shrink.shrinker
+      (Gener.term_gen typ (true, false))
+  ;;
 
-let int_term_gen = term_gen_by_type Int
+  let int_term_gen = term_gen_by_type Int
 
-(* Type-dependent term generator - both the term and its type are generated by the
+  (* Type-dependent term generator - both the term and its type are generated by the
     same random seed *)
-let dep_term_gen =
-  let gen =
-    Gen.(
-      basetype_gen >>= fun typ ->
-      term_gen typ (true, false) >>= fun trm_opt ->
-      match trm_opt with
-      | None -> return None
-      | Some trm -> return (Some (typ, trm)))
-  in
-  make
-    ~print:
-      (let printer (_typ, trm) = toOCaml ~typeannot:false trm in
-       Print.option printer)
-    (* ~shrinker:dep_term_shrinker *)
-    gen
-;;
+  let dep_term_gen =
+    let gen =
+      Gen.(
+        Gener.basetype_gen >>= fun typ ->
+        Gener.term_gen typ (true, false) >>= fun trm_opt ->
+        match trm_opt with
+        | None -> return None
+        | Some trm -> return (Some (typ, trm)))
+    in
+    make
+      ~print:
+        (let printer (_typ, trm) = toOCaml ~typeannot:false trm in
+         Print.option printer)
+      ~shrink:Shrink.dep_term_shrinker
+      gen
+  ;;
 
-let int_term_gen_shrink = set_shrink shrinker int_term_gen
-let rand_term_gen_shrink typ = set_shrink shrinker (term_gen_by_type typ)
-let dep_term_gen_shrink = set_shrink dep_term_shrinker dep_term_gen
+  let typegen =
+    make
+      ~print:typetostr
+      Gen.(
+        frequency
+          [ (1, map (fun i -> Typevar i) (oneofl [ 1; 2; 3; 4; 5 ]));
+            (6, sized Gener.typeGen)
+          ])
+  ;;
+end
 
-let typegen =
-  make
-    ~print:typetostr
-    Gen.(
-      frequency
-        [ (1, map (fun i -> Typevar i) (oneofl [ 1; 2; 3; 4; 5 ])); (6, sized typeGen) ])
-;;
-
-(* FIXME: update to dep_term_gen *)
 let unify_funtest =
-  Test.make ~count:1000 ~name:"unify functional" (pair typegen typegen) (fun (ty, ty') ->
+  let module Ctx = FreshContext () in
+  let module Arb = Arbitrary (Ctx) in
+  Test.make
+    ~count:1000
+    ~name:"unify functional"
+    (pair Arb.typegen Arb.typegen)
+    (fun (ty, ty') ->
       match unify ty ty' with
       | No_sol -> ty <> ty'
       | Sol t ->
@@ -1499,10 +1570,12 @@ let unify_funtest =
 
 (* FIXME: update to dep_term_gen *)
 let gen_classify =
+  let module Ctx = FreshContext () in
+  let module Arb = Arbitrary (Ctx) in
   Test.make
     ~count:1000
     ~name:"classify gen"
-    (make ~collect:(fun t -> if t = None then "None" else "Some") int_term_gen.gen)
+    (make ~collect:(fun t -> if t = None then "None" else "Some") (gen Arb.int_term_gen))
     (fun _ ->
       let () =
         print_string ".";
@@ -1513,10 +1586,12 @@ let gen_classify =
 
 (* FIXME: update to dep_term_gen *)
 let ocaml_test =
+  let module Ctx = FreshContext () in
+  let module Arb = Arbitrary (Ctx) in
   Test.make
     ~count:500
     ~name:"generated term passes OCaml's typecheck"
-    int_term_gen_shrink
+    Arb.int_term_gen
     (fun t_opt ->
       t_opt
       <> None
@@ -1537,11 +1612,9 @@ let ocaml_test =
 
 (* FIXME: update to dep_term_gen *)
 let tcheck_test =
-  Test.make
-    ~count:500
-    ~name:"generated term type checks"
-    int_term_gen (*_shrink*)
-    (fun t_opt ->
+  let module Ctx = FreshContext () in
+  let module Arb = Arbitrary (Ctx) in
+  Test.make ~count:500 ~name:"generated term type checks" Arb.int_term_gen (fun t_opt ->
       t_opt
       <> None
       ==>
@@ -1557,10 +1630,12 @@ let tcheck_test =
 ;;
 
 let int_eq_test =
+  let module Ctx = FreshContext () in
+  let module Arb = Arbitrary (Ctx) in
   Test.make
     ~count:500
     ~name:"bytecode/native backends agree - int_eq_test"
-    int_term_gen_shrink
+    Arb.int_term_gen
     (fun topt ->
       topt
       <> None
@@ -1571,10 +1646,12 @@ let int_eq_test =
 ;;
 
 let rand_eq_test typ =
+  let module Ctx = FreshContext () in
+  let module Arb = Arbitrary (Ctx) in
   Test.make
     ~count:500
     ~name:"bytecode/native backends agree - term gen by given type"
-    (rand_term_gen_shrink typ)
+    (Arb.term_gen_by_type typ)
     (fun topt ->
       topt
       <> None
@@ -1585,10 +1662,12 @@ let rand_eq_test typ =
 ;;
 
 let dep_eq_test =
+  let module Ctx = FreshContext () in
+  let module Arb = Arbitrary (Ctx) in
   Test.make
     ~count:500
     ~name:"bytecode/native backends agree - type-dependent term generator"
-    dep_term_gen_shrink
+    Arb.dep_term_gen
     (fun dep_t_opt ->
       dep_t_opt
       <> None
