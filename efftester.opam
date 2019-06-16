@@ -21,7 +21,7 @@ dev-repo: "git+https://github.com/gasche/efftester.git"
 
 depends: [
   "ocaml" {>= "4.04.0"}
-  "qcheck" {>= "0.5.2"}
+  "qcheck" {>= "0.6"}
   "ocamlformat" {dev & >= "0.9"}
   "dune" {build}
 ]

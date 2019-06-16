@@ -38,16 +38,7 @@ let is_native_byte_equiv (*printFunction*) src =
   (* Silence warnings for partial applications and unused variables *)
   let bcode, bout = run file "byte" "ocamlc -w -5-26" in
   let comp = Sys.command ("diff -q " ^ nout ^ " " ^ bout ^ " > /dev/null") in
-  let res = ncode = bcode && comp = 0 in
-  if res
-  then (
-    print_string ".";
-    flush stdout;
-    res)
-  else (
-    print_string "x";
-    flush stdout;
-    res)
+  ncode = bcode && comp = 0
 ;;
 
 (** AST type definitions  *)
@@ -1606,15 +1597,33 @@ let gen_classify =
     ~count:1000
     ~name:"classify gen"
     (make ~collect:(fun t -> if t = None then "None" else "Some") (gen Arb.int_term_gen))
-    (fun _ ->
-      let () =
-        print_string ".";
-        flush stdout
-      in
-      true)
+    (fun _ -> true)
 ;;
 
-(* FIXME: update to dep_term_gen *)
+let can_compile_test =
+  let counter = ref 1 in
+  let file = "generated_tests/ocamltest.ml" in
+  let module Ctx = FreshContext () in
+  let module Arb = Arbitrary (Ctx) in
+  Test.make
+    ~count:500
+    ~name:"generated term passes OCaml's typecheck"
+    Arb.dep_term_gen
+    (fun t_opt ->
+      t_opt
+      <> None
+      ==>
+      match t_opt with
+      | None -> false
+      | Some (_typ, trm) ->
+        (try
+           let gened_src = term_to_ocaml trm in
+           write_prog (Printf.sprintf "(* %i *) " !counter ^ gened_src) file;
+           incr counter;
+           0 = Sys.command ("ocamlc -w -5@20-26 " ^ file)
+         with _ -> false))
+;;
+
 let ocaml_test =
   let module Ctx = FreshContext () in
   let module Arb = Arbitrary (Ctx) in
@@ -1630,33 +1639,25 @@ let ocaml_test =
       | None -> false
       | Some t ->
         (try
-           let () =
-             print_string ".";
-             flush stdout
-           in
            let file = "generated_tests/ocamltest.ml" in
            let () = write_prog (term_to_ocaml t) file in
            0 = Sys.command ("ocamlc -w -5@20-26 " ^ file)
          with Failure _ -> false))
 ;;
 
-(* FIXME: update to dep_term_gen *)
-let tcheck_test =
+let type_check_test =
   let module Ctx = FreshContext () in
   let module Arb = Arbitrary (Ctx) in
-  Test.make ~count:500 ~name:"generated term type checks" Arb.int_term_gen (fun t_opt ->
+  Test.make ~count:500 ~name:"generated term type checks" Arb.dep_term_gen (fun t_opt ->
       t_opt
       <> None
       ==>
       match t_opt with
       | None -> false
-      | Some t ->
+      | Some (typ, trm) ->
         let env, _, _ = init_tri_env in
-        print_string ".";
-        flush stdout;
-        (match tcheck env t with
-        | Int, e -> eff_leq e (true, false)
-        | _, _ -> false))
+        let typ', eff = tcheck env trm in
+        types_compat typ typ' && eff_leq eff (true, false))
 ;;
 
 let int_eq_test =

@@ -1,9 +1,11 @@
 open Efftester
 
-let () =
+let _ =
   resetvar ();
   resettypevar ();
-  QCheck_runner.run_tests_main
+  QCheck_runner.run_tests
+    ~colors:true
+    ~verbose:true
     (* [ unify_funtest; gen_classify; ocaml_test; tcheck_test; rand_eq_test ] *)
-    [ ocaml_test; tcheck_test ]
+    [ can_compile_test ]
 ;;
