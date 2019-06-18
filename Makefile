@@ -4,11 +4,11 @@ build:
 
 .PHONY: exec
 exec:
-	dune exec src/effmain.exe
+	dune exec src/effmain.exe -- -v --colors $(args)
 
 .PHONY: tests
 tests:
-	dune build src/ci_tests.exe && dune exec src/ci_tests.exe
+	dune build src/ci_tests.exe && dune exec src/ci_tests.exe -- -v --colors $(args)
 
 .PHONY: clean
 clean:

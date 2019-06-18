@@ -1,10 +1,7 @@
 open Efftester
 
-let _ =
+let () =
   resetvar ();
   resettypevar ();
-  QCheck_runner.run_tests
-    ~colors:true
-    ~verbose:true
-    [ dep_eq_test ]
+  QCheck_runner.run_tests_main [ dep_eq_test ]
 ;;
