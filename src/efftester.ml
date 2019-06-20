@@ -1089,31 +1089,49 @@ module Generators (Ctx : Context) = struct
     in
     [ (3, gen) ]
 
-  and list_permute_term_gen_inner env goal size rules =
-    let rec remove_at n xs =
-      match (n, xs) with
-      | 0, _ :: xs -> xs
-      | n, x :: xs -> x :: remove_at (n - 1) xs
-      | _ -> failwith "index out of bounds"
-    in
-    let elts_weighted xs =
-      let _, ig =
-        List.fold_left
-          (fun (i, acc) (w, g) -> (i + 1, (w, Gen.pair (Gen.return i) g) :: acc))
-          (0, [])
-          xs
+  (* {!gen_term_from_rules} tries to generate a term of given type (goal) from given rules
+  (rules):
+    1. It sums the weights of all rules
+
+    2. Using own implementation of Gen.frequency called {!gen_freq}, it picks an element
+    from the (weight, rule) list
+
+    3. If the picked rule can generate a term successfully, then the term wrapped in an
+    option type is returned; otherwise, we look for another rule that can do so using
+    {!gen_freq} with the updated list.
+
+    4. If trying to generate a term we run out of rules, we return None.
+  *)
+  and gen_term_from_rules _env _goal _size rules =
+    let weights_sum = List.fold_left (fun acc (w, _g) -> acc + w) 0 rules in
+    (* own implementation of Gen.frequency:
+      returns a randomly chosen element from the given list and an updated list without
+      the chosen element;
+      we need the picked element's rule to try to generate a value and the list to have
+      other rules if this one fails*)
+    let gen_freq lst rand_k =
+      let rand_k = rand_k - 1 in
+      let rec aux lst (acc_lst, acc_sum) =
+        match lst with
+        | [] -> failwith "gen_term_from_rules: gen_freq: too large rand_k"
+        | ((w, _g) as curr) :: rest ->
+          if rand_k < acc_sum + w
+          then (curr, List.rev acc_lst @ rest)
+          else aux rest (curr :: acc_lst, acc_sum + w)
       in
-      Gen.frequency ig
+      aux lst ([], 0)
     in
-    let to_term i = function
-      | Some term -> Gen.return (Some term)
-      | None ->
-        let remaining_rules = remove_at i rules in
-        list_permute_term_gen_inner env goal size remaining_rules
+    let rec aux rules w_sum : term option Gen.t =
+      match rules with
+      | [] -> Gen.return None
+      | rls ->
+        let open Gen in
+        int_bound w_sum >|= gen_freq rls >>= fun ((w, g), new_rls) ->
+        g >>= function
+        | Some _ as t_opt -> Gen.return t_opt
+        | None -> aux new_rls (w_sum - w)
     in
-    if rules = []
-    then Gen.return None
-    else Gen.(elts_weighted rules >>= fun (i, t) -> to_term i t)
+    aux rules weights_sum
 
   and list_permute_term_gen_outer env goal eff size =
     if size = 0
@@ -1121,7 +1139,7 @@ module Generators (Ctx : Context) = struct
       let rules =
         List.concat [ lit_rules env goal eff size; var_rules env goal eff size ]
       in
-      list_permute_term_gen_inner env goal size rules)
+      gen_term_from_rules env goal size rules)
     else (
       let rules =
         List.concat
@@ -1135,7 +1153,7 @@ module Generators (Ctx : Context) = struct
             if_rules env goal eff size
           ]
       in
-      list_permute_term_gen_inner env goal size rules)
+      gen_term_from_rules env goal size rules)
   ;;
 
   let list_permute_term_gen_rec_wrapper env goal eff =
