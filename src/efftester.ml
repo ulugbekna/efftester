@@ -1089,49 +1089,39 @@ module Generators (Ctx : Context) = struct
     in
     [ (3, gen) ]
 
-  (* {!gen_term_from_rules} tries to generate a term of given type (goal) from given rules
-  (rules):
-    1. It sums the weights of all rules
+  (* [gen_term_from_rules env goal size rules] returns a constant generator with a term
+     wrapped in an option, in which the term was generated using a randomly picked
+     generator from the {!rules} list
 
-    2. Using own implementation of Gen.frequency called {!gen_freq}, it picks an element
-    from the (weight, rule) list
-
-    3. If the picked rule can generate a term successfully, then the term wrapped in an
-    option type is returned; otherwise, we look for another rule that can do so using
-    {!gen_freq} with the updated list.
-
-    4. If trying to generate a term we run out of rules, we return None.
+     Generators are picked according to their weights.
   *)
   and gen_term_from_rules _env _goal _size rules =
+    let bound_int_gen bound st = Random.State.int st bound in
     let weights_sum = List.fold_left (fun acc (w, _g) -> acc + w) 0 rules in
-    (* own implementation of Gen.frequency:
-      returns a randomly chosen element from the given list and an updated list without
-      the chosen element;
-      we need the picked element's rule to try to generate a value and the list to have
-      other rules if this one fails*)
+    (* we reimplement QCheck.Gen.frequency because we want it to also return the weight of
+       the picked element (to update weights sum) and the list without that element *)
     let gen_freq lst rand_k =
-      let rand_k = rand_k - 1 in
-      let rec aux lst (acc_lst, acc_sum) =
+      let rec pick lst (acc_lst, acc_sum) =
         match lst with
         | [] -> failwith "gen_term_from_rules: gen_freq: too large rand_k"
         | ((w, _g) as curr) :: rest ->
           if rand_k < acc_sum + w
-          then (curr, List.rev acc_lst @ rest)
-          else aux rest (curr :: acc_lst, acc_sum + w)
+          then (curr, List.rev_append acc_lst rest)
+          else pick rest (curr :: acc_lst, acc_sum + w)
       in
-      aux lst ([], 0)
+      pick lst ([], 0)
     in
-    let rec aux rules w_sum : term option Gen.t =
+    let rec pick_all rules w_sum : term option Gen.t =
       match rules with
       | [] -> Gen.return None
       | rls ->
         let open Gen in
-        int_bound w_sum >|= gen_freq rls >>= fun ((w, g), new_rls) ->
+        bound_int_gen w_sum >|= gen_freq rls >>= fun ((w, g), new_rls) ->
         g >>= function
         | Some _ as t_opt -> Gen.return t_opt
-        | None -> aux new_rls (w_sum - w)
+        | None -> pick_all new_rls (w_sum - w)
     in
-    aux rules weights_sum
+    pick_all rules weights_sum
 
   and list_permute_term_gen_outer env goal eff size =
     if size = 0
