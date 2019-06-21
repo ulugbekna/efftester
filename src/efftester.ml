@@ -1096,7 +1096,7 @@ module Generators (Ctx : Context) = struct
      Generators are picked according to their weights.
   *)
   and gen_term_from_rules _env _goal _size rules =
-    let bound_int_gen bound st = Random.State.int st bound in
+    let int_below_gen bound st = Random.State.int st bound in
     let weights_sum = List.fold_left (fun acc (w, _g) -> acc + w) 0 rules in
     (* we reimplement QCheck.Gen.frequency because we want it to also return the weight of
        the picked element (to update weights sum) and the list without that element *)
@@ -1116,7 +1116,7 @@ module Generators (Ctx : Context) = struct
       | [] -> Gen.return None
       | rls ->
         let open Gen in
-        bound_int_gen w_sum >|= gen_freq rls >>= fun ((w, g), new_rls) ->
+        int_below_gen w_sum >|= gen_freq rls >>= fun ((w, g), new_rls) ->
         g >>= function
         | Some _ as t_opt -> Gen.return t_opt
         | None -> pick_all new_rls (w_sum - w)
