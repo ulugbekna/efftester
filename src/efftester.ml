@@ -1605,10 +1605,7 @@ let make_logger file_path =
     Printf.fprintf file_out ("(* %d *) " ^^ fmt ^^ ";;\n%!") !counter
 ;;
 
-let no_logger =
-  let discard_out = open_out "/dev/null" in
-  Printf.fprintf discard_out
-;;
+let no_logger = Printf.ifprintf stdout
 
 (** Tests *)
 
