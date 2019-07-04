@@ -108,8 +108,8 @@ generator  *)
 type term =
   | Lit of lit
   | Variable of etype * variable
-  (* [Constructor (type, name, load)] is used to construct ADT variants *)
-  | Constructor of etype * string * term option
+  (* [Constructor (type, name, payload_lst)] is used to construct ADT variants *)
+  | Constructor of etype * string * term list
   (* [PatternMatch typ matched_trm branches eff]
     Note: in type (term * term) list, the first part of the tuple must be a value (no evaluation)
   *)
@@ -119,8 +119,8 @@ type term =
   | Let of variable * etype * term * term * etype * eff
   | If of etype * term * term * term * eff
 
-let some load_typ load = Constructor (Option load_typ, "Some", Some load)
-let none load_typ = Constructor (Option load_typ, "None", None)
+let some typ payload = Constructor (Option typ, "Some", [ payload ])
+let none typ = Constructor (Option typ, "None", [])
 
 (** Printing functions  *)
 
@@ -201,10 +201,16 @@ let term_to_ocaml ?(typeannot = true) term =
       else Printf.bprintf sb "%s" x
     in
     match t with
-    | Constructor (_, name, trm_opt) ->
-      (match trm_opt with
-      | Some trm -> Printf.bprintf sb "(%s (%a))" name exp trm
-      | None -> Printf.bprintf sb "%s" name)
+    | Constructor (_, name, payload_lst) ->
+      (match payload_lst with
+      | [] -> Printf.bprintf sb "%s" name
+      | trms ->
+        Printf.bprintf
+          sb
+          "(%s (%a))"
+          name
+          (fun sb lst -> List.iter (fun trm -> Printf.bprintf sb "%a " exp trm) lst)
+          trms)
     | PatternMatch (_, match_trm, branches, _) ->
       Printf.bprintf
         sb
@@ -264,7 +270,6 @@ let rec arity = function
   | _ -> 0
 ;;
 
-(* FIXME: what does this function do? rename arg repl *)
 let rec subst repl t =
   match t with
   | Unit | Int | Float | Bool | String -> t
@@ -280,19 +285,17 @@ type unify_solution =
 
 exception No_solution
 
-(* FIXME: what does it do? why? *)
 let rec unify_list = function
   | [] -> []
   | (l, r) :: rest ->
     let sub = unify_list rest in
     (match (subst sub l, subst sub r) with
-    (* FIXME: fix pattern matching *)
     | Unit, Unit -> sub
     | Int, Int -> sub
     | Float, Float -> sub
     | Bool, Bool -> sub
     | String, String -> sub
-    | Option a, Option b -> unify_list [ (a, b) ]
+    | Option a, Option b -> unify_list [ (a, b) ] @ sub
     | Typevar a, Typevar b -> if a = b then sub else (a, r) :: sub
     | List a, List b ->
       let sub' = unify_list [ (a, b) ] in
@@ -419,7 +422,10 @@ end)
 
 let rec normalize_eff t =
   match t with
-  | Typevar _ | Unit | Int | Float | Bool | String | Option _ -> t
+  | Typevar _ | Unit | Int | Float | Bool | String -> t
+  | Option t' ->
+    let t'' = normalize_eff t' in
+    Option t''
   | List t' ->
     let t'' = normalize_eff t' in
     List t''
@@ -1109,9 +1115,11 @@ module GeneratorsWithContext (Ctx : Context) = struct
   and if_rules env t eff size =
     let open Gen in
     let gen =
+      (* predicate is generated *)
       list_permute_term_gen_outer env Bool eff (size / 3) >>= function
       | None -> return None
       | Some b ->
+        (* then branch is generated *)
         list_permute_term_gen_outer env t eff (size / 3) >>= function
         | None -> return None
         | Some m ->
@@ -1125,6 +1133,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
               ^ type_to_str ~effannot:true t)
           | Sol sub ->
             let subst_t = subst sub t in
+            (* else branch is generated *)
             list_permute_term_gen_outer env subst_t eff (size / 3) >>= function
             | None -> return None
             | Some n ->
@@ -1166,7 +1175,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
     in
     [ ( 100,
         fun x ->
-          print_endline "option_intro_rules";
+          (* print_endline "option_intro_rules"; *)
           gen x )
     ]
 
@@ -1174,13 +1183,14 @@ module GeneratorsWithContext (Ctx : Context) = struct
     let gen =
       let open Gen in
       StaticGenerators.basetype_gen >>= fun bt ->
-      list_permute_term_gen_outer env (Option bt) eff size >>= function
+      list_permute_term_gen_outer env (Option bt) eff (size / 3) >>= function
       | None -> return None
       | Some match_trm ->
-        list_permute_term_gen_outer env t eff size >>= function
+        let extended_env = add_var "x" bt env in
+        list_permute_term_gen_outer extended_env t eff (size / 3) >>= function
         | None -> return None
         | Some some_branch_trm ->
-          list_permute_term_gen_outer env t eff size >>= function
+          list_permute_term_gen_outer env t eff (size / 3) >>= function
           | None -> return None
           | Some none_branch_trm ->
             return
@@ -1195,7 +1205,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
     in
     [ ( 3,
         fun x ->
-          print_endline "option elim called";
+          (* print_endline "option elim called"; *)
           gen x )
     ]
 
@@ -1292,10 +1302,13 @@ module Shrinker = struct
   let rec fv x = function
     | Lit _ -> false
     | Variable (_, y) -> x = y
-    | Constructor (_typ, _name, load) ->
-      (match load with
-      | None -> false
-      | Some trm -> fv x trm)
+    | Constructor (_typ, _name, payload_lst) ->
+      let rec has_fv lst =
+        match lst with
+        | [] -> false
+        | trm :: rest -> if fv x trm then true else has_fv rest
+      in
+      has_fv payload_lst
     | PatternMatch (_typ, match_trm, branches, _eff) ->
       let rec first_true lst =
         match lst with
@@ -1314,10 +1327,9 @@ module Shrinker = struct
     match m with
     | Lit _ -> m
     | Variable (t, z) -> if x = z then Variable (t, y) else m
-    | Constructor (typ, name, load_opt) ->
-      (match load_opt with
-      | None -> m
-      | Some l -> Constructor (typ, name, Some (alpharename l x y)))
+    | Constructor (typ, name, payload_lst) ->
+      let new_payload_lst = List.map (fun trm -> alpharename trm x y) payload_lst in
+      Constructor (typ, name, new_payload_lst)
     | PatternMatch _ -> failwith "FIXME: alpharename: pat match not implemented"
     | Lambda (t, z, t', m') -> if x = z then m else Lambda (t, z, t', alpharename m' x y)
     | App (rt, m, at, n, e) -> App (rt, alpharename m x y, at, alpharename n x y, e)
@@ -1462,25 +1474,30 @@ let rec tcheck_lit l =
     (List etyp, no_eff)
 ;;
 
-let check_opt_invariants (typ, name, trm_opt) =
+let check_opt_invariants (typ, name, payload_lst) =
   (* invariants:
     - typ must be Option _
     - name must be either "Some" or "None"
-    - if name = "None" then trm_opt must be equal None
-    - if name = "Some" then trm_opt must be equal Some _
-    - unwrapped type t of option must be equal imm_type load
+    - match name with
+      | "Some" -> payload list must be a list of one element &&
+        unwrapped type t of option must be same as (imm_type payload)
+      | "None" -> payload list must be an empty list
+      | _ -> "option adt name invariant failed"
    *)
   match typ with
   | Option t ->
     (match name with
     | "Some" ->
-      (match trm_opt with
-      | Some load ->
-        if t = imm_type load
+      (match payload_lst with
+      | [ payload ] ->
+        if t = imm_type payload
         then Ok typ
-        else Error "check_opt_invariants: type invariant for load failed"
-      | None -> Error "check_opt_invariants: load invariant failed")
-    | "None" -> Ok typ
+        else Error "check_opt_invariants: some payload type invariant failed"
+      | _ -> Error "check_opt_invariants: some payload arity failed")
+    | "None" ->
+      (match payload_lst with
+      | [] -> Ok typ
+      | _ -> Error "check_opt_invariants: none payload arity failed")
     | _ -> Error "check_opt_invariants: name invariant failed")
   | _ -> Error "check_opt_invariants: option type invariant failed"
 ;;
@@ -1495,12 +1512,13 @@ let rec tcheck env term =
        then (et, no_eff)
        else failwith "tcheck: variable types disagree"
      with Not_found -> failwith "tcheck: unknown variable")
-  | Constructor (typ, name, trm_opt) ->
-    (match check_opt_invariants (typ, name, trm_opt) with
+  | Constructor (typ, name, payload_lst) ->
+    (match check_opt_invariants (typ, name, payload_lst) with
     | Ok _ ->
-      (match trm_opt with
-      | None -> (typ, no_eff)
-      | Some trm -> tcheck env trm)
+      (try
+         List.iter (fun trm -> tcheck env trm |> ignore) payload_lst;
+         (typ, no_eff)
+       with Failure msg -> failwith msg)
     | Error msg -> failwith msg)
   | PatternMatch _ -> failwith "FIXME: tcheck: pat match not implemented"
   | App (rt, m, at, n, ceff) ->
@@ -1877,9 +1895,26 @@ let dep_eq_test ~with_logging =
 
 (* The actual call to QCheck_runner.run_tests_main is located in effmain.ml *)
 
+(* FIXME: all below is for testing and must be removed before prod:  *)
 module Gener = GeneratorsWithContext (FreshContext ())
 
-let [ (weight, pm_gen) ] = Gener.option_elim_rules init_tri_env Int (false, false) 3
+let opt_gen =
+  match Gener.option_intro_rules init_tri_env (Option Int) (false, false) 3 with
+  | [ (_weight, opt_gen) ] -> opt_gen
+  | _ -> failwith "opt_gen"
+;;
+
+let gener_opt_term () =
+  QCheck.Gen.generate1 opt_gen |> function
+  | Some x -> "let x = " ^ term_to_ocaml x
+  | None -> "failed"
+;;
+
+let pm_gen =
+  match Gener.option_elim_rules init_tri_env Int (false, false) 3 with
+  | [ (_weight, pm_gen) ] -> pm_gen
+  | _ -> failwith "pm_gen"
+;;
 
 let gener_match_term () =
   QCheck.Gen.generate1 pm_gen |> function
