@@ -191,7 +191,7 @@ let eff_to_str ((ef, ev) : eff) = Printf.sprintf "(%B,%B)" ef ev
    The following prettyprinter is structured according to this grammar to cut down on
    the needless parentheses
 *)
-let term_to_ocaml ?(typeannot = true) term =
+let rec term_to_ocaml ?(typeannot = true) term =
   let rec lit_to_ocaml_sb sb = function
     | LitUnit -> Printf.bprintf sb "()"
     | LitInt i -> if i < 0 then Printf.bprintf sb "(%d)" i else Printf.bprintf sb "%d" i
@@ -229,20 +229,8 @@ let term_to_ocaml ?(typeannot = true) term =
             (fun sb lst -> List.iter (fun trm -> Printf.bprintf sb "%a" exp trm) lst)
           trms)
     | PatternMatch (_, match_trm, branches, _) ->
-      let rec print_pattern sb patt =
-        match patt with
-        | PattVar v -> Printf.bprintf sb "%s" v
-        | PattConstr (_typ, name, patt_lst) ->
-          Printf.bprintf sb "%s%a" name print_patt_list patt_lst
-      and print_patt_list sb patt_lst =
-        match patt_lst with
-        | [] -> ()
-        | [ patt ] -> Printf.bprintf sb " %a" print_pattern patt
-        | patt :: rest ->
-          Printf.bprintf sb " %a,%a" print_pattern patt print_patt_list rest
-      in
       let case_to_str sb (pattern, body) =
-        Printf.bprintf sb "| %a -> %a" print_pattern pattern exp body
+        Printf.bprintf sb "| %a -> %a" pattern_to_ocaml pattern exp body
       in
       Printf.bprintf
         sb
@@ -269,6 +257,19 @@ let term_to_ocaml ?(typeannot = true) term =
   let sb = Buffer.create 80 in
   let () = exp sb term in
   Buffer.contents sb
+
+and pattern_to_ocaml sb patt =
+  let rec print_patt_list sb patt_lst =
+    match patt_lst with
+    | [] -> ()
+    | [ patt ] -> Printf.bprintf sb " %a" pattern_to_ocaml patt
+    | patt :: rest ->
+      Printf.bprintf sb " %a,%a" pattern_to_ocaml patt print_patt_list rest
+  in
+  match patt with
+  | PattVar v -> Printf.bprintf sb "%s" v
+  | PattConstr (_typ, name, patt_lst) ->
+    Printf.bprintf sb "%s%a" name print_patt_list patt_lst
 ;;
 
 (** Effect system function *)
