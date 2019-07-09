@@ -102,7 +102,6 @@ type lit =
   | LitBool of bool
   | LitStr of string
   | LitList of lit list
-  | LitOption of lit option
 
 (** type term is used to represent all syntax constructs (of OCaml) available in our
 generator  *)
@@ -195,10 +194,6 @@ let term_to_ocaml ?(typeannot = true) term =
         List.iter (fun elt -> Printf.bprintf sb "%a; " lit_to_ocaml_sb elt) ls
       in
       Printf.bprintf sb "[%a]" print_lst ls
-    | LitOption e ->
-      (match e with
-      | Some e' -> Printf.bprintf sb "(Some %a)" lit_to_ocaml_sb e'
-      | None -> Printf.bprintf sb "None")
   in
   let rec exp sb t =
     let type_to_ocaml_noannot = type_to_ocaml ~effannot:false in
@@ -404,12 +399,6 @@ let imm_type t =
           l
       in
       List etyp
-    | LitOption e ->
-      (match e with
-      | Some e' -> Option (lit_type e')
-      | None ->
-        let tv = newtypevar () in
-        Option (Typevar tv))
   in
   match t with
   | Lit l -> lit_type l
@@ -820,6 +809,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
   open StaticGenerators
 
   (* Type-directed literal generator *)
+  (* FIXME: literal gen is buggy, e.g., for goal type (int option) list *)
   let rec literal_gen t eff size =
     match t with
     | Unit -> Gen.return LitUnit
@@ -827,12 +817,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
     | Float -> Gen.map (fun f -> LitFloat f) float_gen
     | Bool -> Gen.map (fun b -> LitBool b) Gen.bool
     | String -> Gen.map (fun s -> LitStr s) string_gen
-    | Option t' ->
-      let open Gen in
-      frequencyl [ (2, `Some); (1, `None) ] >>= fun opt ->
-      (match opt with
-      | `Some -> literal_gen t' eff (size / 2) >|= fun e -> LitOption (Some e)
-      | `None -> return @@ LitOption None)
+    | Option _t' -> (* FIXME: implement *) failwith "literal_gen: not implemented"
     | List (Typevar _) -> Gen.return (LitList [])
     | List t ->
       if size = 0
@@ -1505,14 +1490,6 @@ let rec tcheck_lit l =
         l
     in
     (List etyp, no_eff)
-  | LitOption e ->
-    (match e with
-    | Some e' ->
-      let t, _ = tcheck_lit e' in
-      (t, no_eff)
-    | None ->
-      let tv = newtypevar () in
-      (Typevar tv, no_eff))
 ;;
 
 let check_opt_invariants (typ, name, payload_lst) =
