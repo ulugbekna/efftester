@@ -166,13 +166,25 @@ let type_to_str ?(effannot = false) typ =
 
 let eff_to_str ((ef, ev) : eff) = Printf.sprintf "(%B,%B)" ef ev
 
-(* FIXME: BNF grammar:
+(* BNF grammar:
 
-    exp ::= l | x | fun (x:t) -> exp | exp exp | let (x:t) = exp in exp
+    exp ::= l
+          | x
+          | fun (x:t) -> exp
+          | exp exp
+          | let (x:t) = exp in exp
+          | constr (exp, exp, ...)
+          | begin match exp with pat -> arg | pat -> arg | ... end
 
    Same language but unambiguously formulated grammar:
 
-    exp ::= app | fun (x:t) -> exp | let (x:t) = exp in exp | if exp then exp else exp
+    exp ::= app
+          | fun (x:t) -> exp
+          | let (x:t) = exp in exp
+          | if exp then exp else exp
+          | constr (exp, exp, ...)
+          | begin match exp with pat -> arg | pat -> arg | ... end
+
     app ::= arg | app arg
     arg ::= l | x | (exp)
 
