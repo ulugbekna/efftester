@@ -101,13 +101,13 @@ type lit =
   | LitFloat of float
   | LitBool of bool
   | LitStr of string
-  | LitList of lit list
 
 (** type term is used to represent all syntax constructs (of OCaml) available in our
 generator  *)
 type term =
   | Lit of lit
   | Variable of etype * variable
+  | ListTrm of etype * term list * eff
   (* [Constructor (type, name, payload_lst)] is used to construct ADT variants *)
   | Constructor of etype * string * term list
   (* [PatternMatch typ matched_trm cases eff] *)
@@ -192,7 +192,7 @@ let eff_to_str ((ef, ev) : eff) = Printf.sprintf "(%B,%B)" ef ev
    the needless parentheses
 *)
 let rec term_to_ocaml ?(typeannot = true) term =
-  let rec lit_to_ocaml_sb sb = function
+  let lit_to_ocaml_sb sb = function
     | LitUnit -> Printf.bprintf sb "()"
     | LitInt i -> if i < 0 then Printf.bprintf sb "(%d)" i else Printf.bprintf sb "%d" i
     | LitFloat f ->
@@ -201,11 +201,6 @@ let rec term_to_ocaml ?(typeannot = true) term =
         Without parentheses -0. is interpreted as an arithmetic operation function. *)
     | LitBool b -> Printf.bprintf sb "%B" b
     | LitStr s -> Printf.bprintf sb "%S" s
-    | LitList ls ->
-      let print_lst sb ls =
-        List.iter (fun elt -> Printf.bprintf sb "%a; " lit_to_ocaml_sb elt) ls
-      in
-      Printf.bprintf sb "[%a]" print_lst ls
   in
   let rec exp sb t =
     let type_to_ocaml_noannot = type_to_ocaml ~effannot:false in
@@ -239,11 +234,11 @@ let rec term_to_ocaml ?(typeannot = true) term =
         match_trm
         (fun sb branches -> List.iter (case_to_str sb) branches)
         branches
-    | Lambda (_, x, t, m) -> Printf.bprintf sb "fun %a -> %a" print_binder (x, t) exp m
+    | Lambda (_, x, t, m) -> Printf.bprintf sb "(fun %a -> %a)" print_binder (x, t) exp m
     | Let (x, t, m, n, _, _) ->
       Printf.bprintf sb "let %a = %a in %a" print_binder (x, t) exp m exp n
     | If (_, b, m, n, _) -> Printf.bprintf sb "if %a then %a else %a" exp b exp m exp n
-    | Lit _ | Variable _ | App _ -> app sb t
+    | Lit _ | Variable _ | ListTrm _ | App _ -> app sb t
   and app sb t =
     match t with
     | App (_, m, _, n, _) -> Printf.bprintf sb "%a %a" app m arg n
@@ -252,6 +247,9 @@ let rec term_to_ocaml ?(typeannot = true) term =
     match t with
     | Lit l -> lit_to_ocaml_sb sb l
     | Variable (_, s) -> Printf.bprintf sb "%s" s
+    | ListTrm (_, ls, _) ->
+      let print_lst sb ls = List.iter (fun elt -> Printf.bprintf sb "%a; " exp elt) ls in
+      Printf.bprintf sb "[%a]" print_lst ls
     | _ -> Printf.bprintf sb "(%a)" exp t
   in
   let sb = Buffer.create 80 in
@@ -378,6 +376,7 @@ let rec types_compat t t' =
 let imm_eff t =
   match t with
   | Lit _ | Variable (_, _) | Constructor (_, _, _) | Lambda (_, _, _, _) -> no_eff
+  | ListTrm (_, _, e) -> e
   | PatternMatch (_, _, _, e) -> e
   | App (_, _, _, _, e) -> e
   | Let (_, _, _, _, _, e) -> e
@@ -385,37 +384,18 @@ let imm_eff t =
 ;;
 
 let imm_type t =
-  let rec lit_type l =
+  let lit_type l =
     match l with
     | LitUnit -> Unit
     | LitInt _ -> Int
     | LitFloat _ -> Float
     | LitBool _ -> Bool
     | LitStr _ -> String
-    | LitList l ->
-      let etyp =
-        List.fold_left
-          (fun typacc elem ->
-            let etyp = lit_type elem in
-            if types_compat typacc etyp (* if typacc is a generalization of etyp *)
-            then etyp
-            else if types_compat etyp typacc (* if etyp is a generalization of typeacc *)
-            then typacc
-            else
-              failwith
-                ("lit_type: elements in list literal disagree"
-                ^ "  typacc is "
-                ^ type_to_str ~effannot:true typacc
-                ^ "  etyp is "
-                ^ type_to_str ~effannot:true etyp))
-          (Typevar (newtypevar ()))
-          l
-      in
-      List etyp
   in
   match t with
   | Lit l -> lit_type l
   | Variable (typ, _) -> typ
+  | ListTrm (typ, _, _) -> typ
   | Constructor (typ, _, _) -> typ
   | PatternMatch (typ, _, _, _) -> typ
   | Lambda (typ, _, _, _) -> typ
@@ -785,7 +765,6 @@ module StaticGenerators = struct
   let basetype_gen = Gen.oneofl [ Int; Float; String ]
   let eff_gen = Gen.oneofl [ (false, false); (true, false) ]
 
-  (* FIXME: to add option as a base type? *)
   let type_gen =
     (* Generates ground types (sans type variables) *)
     Gen.fix (fun recgen n ->
@@ -823,25 +802,15 @@ module GeneratorsWithContext (Ctx : Context) = struct
 
   (* Type-directed literal generator *)
   (* FIXME: literal gen is buggy, e.g., for goal type (int option) list *)
-  let rec literal_gen t eff size =
+  let literal_gen t _eff _size =
     match t with
     | Unit -> Gen.return LitUnit
     | Int -> Gen.map (fun i -> LitInt i) int_gen
     | Float -> Gen.map (fun f -> LitFloat f) float_gen
     | Bool -> Gen.map (fun b -> LitBool b) Gen.bool
     | String -> Gen.map (fun s -> LitStr s) string_gen
-    | Option _t' -> (* FIXME: implement *) failwith "literal_gen: not implemented"
-    | List (Typevar _) -> Gen.return (LitList [])
-    | List t ->
-      if size = 0
-      then Gen.return (LitList [])
-      else
-        Gen.map
-          (fun ls -> LitList ls)
-          (Gen.list_size (Gen.int_bound (sqrt size)) (literal_gen t eff (sqrt size)))
-    (*     (Gen.list_size (Gen.int_bound (size/2)) (literal_gen t eff (size/2))) *)
-    (* FIXME: - one element should/can have effect, if 'eff' allows *)
-    (*        - list items should be able to contain arbitrary effectful exps *)
+    | Option _ -> failwith "literal_gen: option arg. should not happen"
+    | List _ -> failwith "literal_gen: list arg. should not happen"
     | Typevar _ -> failwith "literal_gen: typevar arg. should not happen"
     | Fun _ -> failwith "literal_gen: funtype arg. should not happen"
   ;;
@@ -863,9 +832,9 @@ module GeneratorsWithContext (Ctx : Context) = struct
     in
     match s with
     | List s when list_of_fun s -> []
-    | Unit | Int | Float | Bool | String | List _ ->
+    | Unit | Int | Float | Bool | String ->
       [ (6, Gen.map (fun l -> Some (Lit l)) (literal_gen s eff size)) ]
-    | Option _ | Fun _ | Typevar _ -> []
+    | List _ | Option _ | Fun _ | Typevar _ -> []
   ;;
 
   (* Sized generator of variables according to the VAR rule
@@ -1199,7 +1168,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
         | _ -> failwith "option_intro_rules: impossible option adt_constr name")
       | _ -> return None
     in
-    [ (100, gen) ]
+    [ (3, gen) ]
 
   and option_elim_rules env t eff size =
     let gen =
@@ -1227,6 +1196,37 @@ module GeneratorsWithContext (Ctx : Context) = struct
                       eff ))
     in
     [ (3, gen) ]
+
+  and list_intro_rules env goal_typ eff size : (int * term option Gen.t) list =
+    let open Gen in
+    match goal_typ with
+    | List elt_typ ->
+      let gen =
+        match elt_typ with
+        | Typevar _ -> return @@ Some (ListTrm (goal_typ, [], no_eff))
+        | _ ->
+          if size = 0
+          then return @@ Some (ListTrm (goal_typ, [], no_eff))
+          else
+            int_bound (sqrt size) >>= fun lst_size ->
+            let lst_size = if lst_size = 0 then 1 else lst_size in
+            Gen.list_size
+              (return lst_size)
+              (list_permute_term_gen_outer env elt_typ eff (size / (lst_size * 10)))
+            >>= fun opt_lst ->
+            let lst =
+              List.fold_left
+                (fun acc_lst elt ->
+                  match elt with
+                  | Some x -> x :: acc_lst
+                  | None -> acc_lst)
+                []
+                opt_lst
+            in
+            return @@ Some (ListTrm (goal_typ, lst, eff))
+      in
+      [ (3, gen) ]
+    | _ -> []
 
   (* [gen_term_from_rules env goal size rules] returns a constant generator with a term
      wrapped in an option, in which the term was generated using a randomly picked
@@ -1275,6 +1275,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
           [ lit_rules env goal eff size;
             option_intro_rules env goal eff size;
             option_elim_rules env goal eff size;
+            list_intro_rules env goal eff size;
             (*var_rules env goal eff size;*)
             (* var rule is covered by indir with no args *)
             app_rules env goal eff size;
@@ -1318,16 +1319,13 @@ module Shrinker = struct
   ;;
 
   (* determines whether x occurs free (outside a binding) in the arg. exp *)
-  let rec fv x = function
+  let rec fv x trm =
+    let has_fv lst = List.exists (fun trm -> fv x trm) lst in
+    match trm with
     | Lit _ -> false
     | Variable (_, y) -> x = y
-    | Constructor (_typ, _name, payload_lst) ->
-      let rec has_fv lst =
-        match lst with
-        | [] -> false
-        | trm :: rest -> if fv x trm then true else has_fv rest
-      in
-      has_fv payload_lst
+    | ListTrm (_, lst, _) -> has_fv lst
+    | Constructor (_typ, _name, args) -> has_fv args
     | PatternMatch (_typ, match_trm, branches, _eff) ->
       let rec first_true lst =
         match lst with
@@ -1346,6 +1344,9 @@ module Shrinker = struct
     match m with
     | Lit _ -> m
     | Variable (t, z) -> if x = z then Variable (t, y) else m
+    | ListTrm (typ, lst, eff) ->
+      let new_lst = List.map (fun trm -> alpharename trm x y) lst in
+      ListTrm (typ, new_lst, eff)
     | Constructor (typ, name, payload_lst) ->
       let new_payload_lst = List.map (fun trm -> alpharename trm x y) payload_lst in
       Constructor (typ, name, new_payload_lst)
@@ -1375,7 +1376,6 @@ module Shrinker = struct
     | LitInt i -> Iter.map (fun i' -> Lit (LitInt i')) (Shrink.int i)
     (* TODO how to shrink floats? *)
     | LitStr s -> Iter.map (fun s' -> Lit (LitStr s')) (Shrink.string s)
-    | LitList ls -> Iter.map (fun ls' -> Lit (LitList ls')) (Shrink.list ls)
     | _ -> Iter.empty
   ;;
 
@@ -1387,8 +1387,9 @@ module Shrinker = struct
       (match create_lit t with
       | Some c -> Iter.return c
       | _ -> Iter.empty)
+    | ListTrm (t, lst, e) -> Iter.map (fun l -> ListTrm (t, l, e)) (Shrink.list lst)
     | Constructor _ as c -> Iter.return c
-    | PatternMatch _ -> failwith "FIXME: term_shrinker: pat match not implemented"
+    | PatternMatch _ -> Iter.return term (* FIXME: not implemented *)
     | Lambda (t, x, s, m) -> Iter.map (fun m' -> Lambda (t, x, s, m')) (term_shrinker m)
     | App (rt, m, at, n, e) ->
       (match create_lit rt with
@@ -1476,33 +1477,13 @@ end
  *)
 
 (* First version, checks type-and-effect annotation *)
-let rec tcheck_lit l =
+let tcheck_lit l =
   match l with
   | LitUnit -> (Unit, no_eff)
   | LitInt _ -> (Int, no_eff)
   | LitFloat _ -> (Float, no_eff)
   | LitBool _ -> (Bool, no_eff)
   | LitStr _ -> (String, no_eff)
-  | LitList l ->
-    let etyp =
-      List.fold_left
-        (fun typacc elem ->
-          let etyp, _ = tcheck_lit elem in
-          if types_compat typacc etyp (* if typacc is a generalization of etyp *)
-          then etyp
-          else if types_compat etyp typacc (* if etyp is a generalization of typeacc *)
-          then typacc
-          else
-            failwith
-              ("tcheck_lit: elements in list literal disagree"
-              ^ "  typacc is "
-              ^ type_to_str ~effannot:true typacc
-              ^ "  etyp is "
-              ^ type_to_str ~effannot:true etyp))
-        (Typevar (newtypevar ()))
-        l
-    in
-    (List etyp, no_eff)
 ;;
 
 let check_opt_invariants (typ, name, payload_lst) =
@@ -1543,6 +1524,16 @@ let rec tcheck env term =
        then (et, no_eff)
        else failwith "tcheck: variable types disagree"
      with Not_found -> failwith "tcheck: unknown variable")
+  | ListTrm (typ, lst, eff) ->
+    (match typ with
+    | List elem_typ ->
+      List.iter
+        (fun e ->
+          if not (imm_type e = elem_typ)
+          then failwith "tcheck: a list type mismatches its element's type")
+        lst;
+      (typ, eff)
+    | _ -> failwith "tcheck: ListTrm must have a list type")
   | Constructor (typ, name, payload_lst) ->
     (match check_opt_invariants (typ, name, payload_lst) with
     | Ok _ ->
@@ -1551,7 +1542,14 @@ let rec tcheck env term =
          (typ, no_eff)
        with Failure msg -> failwith msg)
     | Error msg -> failwith msg)
-  | PatternMatch _ -> failwith "FIXME: tcheck: pat match not implemented"
+  | PatternMatch (typ, _matched_trm, cases, eff) ->
+    (* how to ensure that patterns can be applied to the matched term? *)
+    let has_type_mismatch =
+      List.exists (fun (_pat, body) -> not (typ = imm_type body)) cases
+    in
+    if has_type_mismatch
+    then failwith "tcheck: PatternMatch type mismatches that of a case"
+    else (typ, eff)
   | App (rt, m, at, n, ceff) ->
     let mtyp, meff = tcheck env m in
     let ntyp, neff = tcheck env n in
@@ -1920,6 +1918,7 @@ let dep_eq_test ~with_logging =
         false
       | Some (typ, trm) ->
         let generated_prgm = rand_print_wrap typ trm |> term_to_ocaml in
+        print_endline generated_prgm;
         logger "%s" generated_prgm;
         is_native_byte_equiv generated_prgm)
 ;;
