@@ -278,11 +278,11 @@ let rec term_to_ocaml ?(typeannot = true) term =
   Buffer.contents sb
 
 and pattern_to_ocaml sb patt =
-  let rec print_patt_list sb patt_lst =
+  let print_patt_list sb patt_lst =
     match patt_lst with
     | [] -> ()
     | [ patt ] -> Printf.bprintf sb " %a" pattern_to_ocaml patt
-    | patt :: rest ->
+    | _patt_lst ->
       let sep sb () = Printf.bprintf sb ", " in
       Printf.bprintf sb " (%a)" (bprint_list ~sep pattern_to_ocaml) patt_lst
   in
@@ -900,7 +900,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
     let gen s eff t =
       Gen.(
         var_gen >>= fun x ->
-        list_permute_term_gen_outer (add_var x s env) t eff (size / 2) >>= function
+        term_gen_sized (add_var x s env) t eff (size / 2) >>= function
         | None -> return None
         | Some m ->
           let myeff = imm_eff m in
@@ -923,10 +923,10 @@ module GeneratorsWithContext (Ctx : Context) = struct
   and app_rules env t eff size =
     let open Gen in
     let from_type funeff argeff s =
-      list_permute_term_gen_outer env (Fun (s, eff, t)) funeff (size / 2) >>= function
+      term_gen_sized env (Fun (s, eff, t)) funeff (size / 2) >>= function
       | None -> Gen.return None
       | Some f ->
-        list_permute_term_gen_outer env s argeff (size / 2) >>= function
+        term_gen_sized env s argeff (size / 2) >>= function
         | None -> Gen.return None
         | Some x ->
           (match imm_type f with
@@ -1000,7 +1000,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
         (* arg 'n' may have effect 'eff' *)
         let myeff = if n = 0 then eff else no_eff in
         Gen.( >>= )
-          (list_permute_term_gen_outer env arg myeff (size / 2))
+          (term_gen_sized env arg myeff (size / 2))
           (function
             | None -> Gen.return None
             | Some a ->
@@ -1123,10 +1123,10 @@ module GeneratorsWithContext (Ctx : Context) = struct
     let open Gen in
     let from_type s =
       var_gen >>= fun x ->
-      list_permute_term_gen_outer env s eff (size / 2) >>= function
+      term_gen_sized env s eff (size / 2) >>= function
       | None -> return None
       | Some m ->
-        list_permute_term_gen_outer (add_var x s env) t eff (size / 2) >>= function
+        term_gen_sized (add_var x s env) t eff (size / 2) >>= function
         | None -> return None
         | Some n ->
           let myeff = eff_join (imm_eff m) (imm_eff n) in
@@ -1138,11 +1138,11 @@ module GeneratorsWithContext (Ctx : Context) = struct
     let open Gen in
     let gen =
       (* predicate is generated *)
-      list_permute_term_gen_outer env Bool eff (size / 3) >>= function
+      term_gen_sized env Bool eff (size / 3) >>= function
       | None -> return None
       | Some b ->
         (* then branch is generated *)
-        list_permute_term_gen_outer env t eff (size / 3) >>= function
+        term_gen_sized env t eff (size / 3) >>= function
         | None -> return None
         | Some m ->
           let then_type = imm_type m in
@@ -1156,7 +1156,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
           | Sol sub ->
             let subst_t = subst sub t in
             (* else branch is generated *)
-            list_permute_term_gen_outer env subst_t eff (size / 3) >>= function
+            term_gen_sized env subst_t eff (size / 3) >>= function
             | None -> return None
             | Some n ->
               let else_type = imm_type n in
@@ -1183,7 +1183,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
         (match name with
         | "None" -> return (Some (none t))
         | "Some" ->
-          list_permute_term_gen_outer env t' eff (size / 3) >>= fun trm ->
+          term_gen_sized env t' eff (size - 1) >>= fun trm ->
           (match trm with
           | None -> return None
           | Some trm' -> return (Some (some t trm')))
@@ -1196,15 +1196,15 @@ module GeneratorsWithContext (Ctx : Context) = struct
     let gen =
       let open Gen in
       StaticGenerators.basetype_gen >>= fun bt ->
-      list_permute_term_gen_outer env (Option bt) eff (size / 3) >>= function
+      term_gen_sized env (Option bt) eff (size / 3) >>= function
       | None -> return None
       | Some match_trm ->
         var_gen >>= fun var_name ->
         let extended_env = add_var var_name bt env in
-        list_permute_term_gen_outer extended_env t eff (size / 3) >>= function
+        term_gen_sized extended_env t eff (size / 3) >>= function
         | None -> return None
         | Some some_branch_trm ->
-          list_permute_term_gen_outer env t eff (size / 3) >>= function
+          term_gen_sized env t eff (size / 3) >>= function
           | None -> return None
           | Some none_branch_trm ->
             return
@@ -1234,7 +1234,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
             let lst_size = if lst_size = 0 then 1 else lst_size in
             Gen.list_size
               (return lst_size)
-              (list_permute_term_gen_outer env elt_typ eff (size / (lst_size * 10)))
+              (term_gen_sized env elt_typ eff (size / (lst_size * 10)))
             >>= fun opt_lst ->
             let lst =
               List.fold_left
@@ -1284,7 +1284,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
     in
     pick_all rules weights_sum
 
-  and list_permute_term_gen_outer env goal eff size =
+  and term_gen_sized env goal eff size =
     if size = 0
     then (
       let rules =
@@ -1311,7 +1311,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
   ;;
 
   let list_permute_term_gen_rec_wrapper env goal eff =
-    Gen.sized (list_permute_term_gen_outer env goal eff)
+    Gen.sized (term_gen_sized env goal eff)
   ;;
 
   let term_gen = list_permute_term_gen_rec_wrapper init_tri_env
@@ -1928,7 +1928,6 @@ let dep_eq_test ~with_logging =
         false
       | Some (typ, trm) ->
         let generated_prgm = rand_print_wrap typ trm |> term_to_ocaml in
-        print_endline generated_prgm;
         logger "%s" generated_prgm;
         is_native_byte_equiv generated_prgm)
 ;;
