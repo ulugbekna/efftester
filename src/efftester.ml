@@ -1343,18 +1343,19 @@ module Shrinker = struct
   (* determines whether x occurs free (outside a binding) in the arg. exp *)
   let rec fv x trm =
     let has_fv lst = List.exists (fun trm -> fv x trm) lst in
+    let rec occurs_in_pat var pat =
+      match pat with
+      | PattVar x -> x = var
+      | PattConstr (_, _, lst) -> List.exists (fun pt -> occurs_in_pat var pt) lst
+    in
     match trm with
     | Lit _ -> false
     | Variable (_, y) -> x = y
     | ListTrm (_, lst, _) -> has_fv lst
     | Constructor (_typ, _name, args) -> has_fv args
-    | PatternMatch (_typ, match_trm, branches, _eff) ->
-      let rec first_true lst =
-        match lst with
-        | [] -> false
-        | (_, trm) :: rest -> if fv x trm then true else first_true rest
-      in
-      fv x match_trm || first_true branches
+    | PatternMatch (_typ, match_trm, cases, _eff) ->
+      let fv_in_case (pat, trm) = if occurs_in_pat x pat then false else fv x trm in
+      fv x match_trm || List.exists fv_in_case cases
     | Lambda (_, y, _, m) -> if x = y then false else fv x m
     | App (_, m, _, n, _) -> fv x m || fv x n
     | Let (y, _, m, n, _, _) -> fv x m || if x = y then false else fv x n
