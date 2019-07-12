@@ -1340,14 +1340,15 @@ module Shrinker = struct
     | Option _ | List _ | Fun _ | Typevar _ -> None
   ;;
 
+  let rec occurs_in_pat var pat =
+    match pat with
+    | PattVar x -> x = var
+    | PattConstr (_, _, lst) -> List.exists (fun pt -> occurs_in_pat var pt) lst
+  ;;
+
   (* determines whether x occurs free (outside a binding) in the arg. exp *)
   let rec fv x trm =
     let has_fv lst = List.exists (fun trm -> fv x trm) lst in
-    let rec occurs_in_pat var pat =
-      match pat with
-      | PattVar x -> x = var
-      | PattConstr (_, _, lst) -> List.exists (fun pt -> occurs_in_pat var pt) lst
-    in
     match trm with
     | Lit _ -> false
     | Variable (_, y) -> x = y
@@ -1375,15 +1376,12 @@ module Shrinker = struct
       Constructor (typ, name, new_payload_lst)
     | PatternMatch (typ, matched_trm, cases, eff) ->
       let matched_trm' = alpharename matched_trm x y in
-      let rec alpharen_pat = function
-        | PattVar s when s = x -> PattVar y (* (?) Should we rename vars in patterns? *)
-        | PattVar s -> PattVar s
-        | PattConstr (typ, name, patt_lst) ->
-          let patt_lst' = List.map alpharen_pat patt_lst in
-          PattConstr (typ, name, patt_lst')
-      in
       let cases' =
-        List.map (fun (pat, trm) -> (alpharen_pat pat, alpharename trm x y)) cases
+        List.map
+          (fun (patt, body) ->
+            (* all variables in patterns are bound, so rename only if var is not in pattern *)
+            if occurs_in_pat x patt then (patt, body) else (patt, alpharename body x y))
+          cases
       in
       PatternMatch (typ, matched_trm', cases', eff)
     | Lambda (t, z, t', m') -> if x = z then m else Lambda (t, z, t', alpharename m' x y)
