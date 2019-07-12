@@ -6,6 +6,34 @@
 
 open QCheck
 
+(** Helpers *)
+
+let make_logger file_path =
+  let file_out = open_out file_path in
+  let counter = ref 0 in
+  fun fmt ->
+    incr counter;
+    Printf.fprintf file_out ("(* %d *) " ^^ fmt ^^ ";;\n%!") !counter
+;;
+
+let no_logger = Printf.ifprintf stdout
+
+let rec bprint_list ~sep elt_printer buf lst =
+  match lst with
+  | [] -> ()
+  | [ elt ] -> elt_printer buf elt
+  | elt :: rest ->
+    Printf.bprintf
+      buf
+      "%a%a%a"
+      elt_printer
+      elt
+      sep
+      ()
+      (bprint_list ~sep elt_printer)
+      rest
+;;
+
 (** Compilation *)
 
 (* Write OCaml source to file *)
@@ -214,15 +242,8 @@ let rec term_to_ocaml ?(typeannot = true) term =
       (match payload_lst with
       | [] -> Printf.bprintf sb "%s" name
       | trms ->
-        Printf.bprintf
-          sb
-          "(%s (%a))"
-          name
-          (* TODO: when we add support for payload that is a list with more than
-            one element, we need to fix the printing for payload list
-           *)
-            (fun sb lst -> List.iter (fun trm -> Printf.bprintf sb "%a" exp trm) lst)
-          trms)
+        let sep sb () = Printf.bprintf sb ", " in
+        Printf.bprintf sb "(%s (%a))" name (bprint_list ~sep exp) trms)
     | PatternMatch (_, match_trm, branches, _) ->
       let case_to_str sb (pattern, body) =
         Printf.bprintf sb "| %a -> %a" pattern_to_ocaml pattern exp body
@@ -262,7 +283,8 @@ and pattern_to_ocaml sb patt =
     | [] -> ()
     | [ patt ] -> Printf.bprintf sb " %a" pattern_to_ocaml patt
     | patt :: rest ->
-      Printf.bprintf sb " %a,%a" pattern_to_ocaml patt print_patt_list rest
+      let sep sb () = Printf.bprintf sb ", " in
+      Printf.bprintf sb " (%a)" (bprint_list ~sep pattern_to_ocaml) patt_lst
   in
   match patt with
   | PattVar v -> Printf.bprintf sb "%s" v
@@ -1800,18 +1822,6 @@ let unify_funtest =
         types_compat sty sty' || types_compat sty' sty)
 ;;
 
-(** Helpers *)
-
-let make_logger file_path =
-  let file_out = open_out file_path in
-  let counter = ref 0 in
-  fun fmt ->
-    incr counter;
-    Printf.fprintf file_out ("(* %d *) " ^^ fmt ^^ ";;\n%!") !counter
-;;
-
-let no_logger = Printf.ifprintf stdout
-
 (** Tests *)
 
 (* FIXME: update to arb_dep_term *)
@@ -1924,30 +1934,3 @@ let dep_eq_test ~with_logging =
 ;;
 
 (* The actual call to QCheck_runner.run_tests_main is located in effmain.ml *)
-
-(* FIXME: all below is for testing and must be removed before prod:  *)
-module Gener = GeneratorsWithContext (FreshContext ())
-
-let opt_gen =
-  match Gener.option_intro_rules init_tri_env (Option Int) (false, false) 3 with
-  | [ (_weight, opt_gen) ] -> opt_gen
-  | _ -> failwith "opt_gen"
-;;
-
-let gener_opt_term () =
-  QCheck.Gen.generate1 opt_gen |> function
-  | Some x -> "let x = " ^ term_to_ocaml x
-  | None -> "failed"
-;;
-
-let pm_gen =
-  match Gener.option_elim_rules init_tri_env Int (false, false) 3 with
-  | [ (_weight, pm_gen) ] -> pm_gen
-  | _ -> failwith "pm_gen"
-;;
-
-let gener_match_term () =
-  QCheck.Gen.generate1 pm_gen |> function
-  | Some x -> "let x = " ^ term_to_ocaml x
-  | None -> "failed"
-;;
