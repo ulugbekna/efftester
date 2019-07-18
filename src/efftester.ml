@@ -34,6 +34,20 @@ let rec bprint_list ~sep elt_printer buf lst =
       rest
 ;;
 
+(* [list_elems shrink l yield] shrinks a list of elements [l] given a shrinker [shrink]
+  TODO: use QCheck version of [list_elems] when @gasche's PR gets merged *)
+let list_elems shrink l yield =
+  (* try to shrink each element of the list *)
+  let rec elem_loop rev_prefix suffix =
+    match suffix with
+    | [] -> ()
+    | x :: xs ->
+      shrink x (fun x' -> yield (List.rev_append rev_prefix (x' :: xs)));
+      elem_loop (x :: rev_prefix) xs
+  in
+  elem_loop [] l
+;;
+
 (** Compilation *)
 
 (* Write OCaml source to file *)
@@ -1409,8 +1423,14 @@ module Shrinker = struct
       | Some c -> Iter.return c
       | _ -> Iter.empty)
     | ListTrm (t, lst, e) -> Iter.map (fun l -> ListTrm (t, l, e)) (Shrink.list lst)
-    | Constructor _ as c -> Iter.return c
-    | PatternMatch _ -> Iter.return term (* FIXME: not implemented *)
+    | Constructor (typ, name, args) ->
+      let open Iter in
+      list_elems term_shrinker args >|= fun args' -> Constructor (typ, name, args')
+    | PatternMatch (typ, matched_trm, cases, eff) ->
+      let open Iter in
+      term_shrinker matched_trm >>= fun matched_trm' ->
+      list_elems (fun (pat, body) -> Iter.pair (return pat) (term_shrinker body)) cases
+      >|= fun cases' -> PatternMatch (typ, matched_trm', cases', eff)
     | Lambda (t, x, s, m) -> Iter.map (fun m' -> Lambda (t, x, s, m')) (term_shrinker m)
     | App (rt, m, at, n, e) ->
       (match create_lit rt with
