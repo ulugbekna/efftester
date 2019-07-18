@@ -34,9 +34,9 @@ let rec bprint_list ~sep elt_printer buf lst =
       rest
 ;;
 
-(* [list_elems shrink l yield] shrinks a list of elements [l] given a shrinker [shrink]
-  TODO: use QCheck version of [list_elems] when @gasche's PR gets merged *)
-let list_elems shrink l yield =
+(* [shrink_list_elems shrink l yield] shrinks a list of elements [l] given a shrinker [shrink]
+  TODO: use QCheck version of [shrink_list_elems] when @gasche's PR gets merged *)
+let shrink_list_elems shrink l yield =
   (* try to shrink each element of the list *)
   let rec elem_loop rev_prefix suffix =
     match suffix with
@@ -1425,12 +1425,15 @@ module Shrinker = struct
     | ListTrm (t, lst, e) -> Iter.map (fun l -> ListTrm (t, l, e)) (Shrink.list lst)
     | Constructor (typ, name, args, eff) ->
       let open Iter in
-      list_elems term_shrinker args >|= fun args' -> Constructor (typ, name, args', eff)
+      shrink_list_elems term_shrinker args >|= fun args' ->
+      Constructor (typ, name, args', eff)
     | PatternMatch (typ, matched_trm, cases, eff) ->
       let open Iter in
-      term_shrinker matched_trm >>= fun matched_trm' ->
-      list_elems (fun (pat, body) -> Iter.pair (return pat) (term_shrinker body)) cases
-      >|= fun cases' -> PatternMatch (typ, matched_trm', cases', eff)
+      Iter.map (fun m' -> PatternMatch (typ, m', cases, eff)) (term_shrinker matched_trm)
+      <+> ( shrink_list_elems
+              (fun (pat, body) -> Iter.pair (return pat) (term_shrinker body))
+              cases
+          >|= fun c' -> PatternMatch (typ, matched_trm, c', eff) )
     | Lambda (t, x, s, m) -> Iter.map (fun m' -> Lambda (t, x, s, m')) (term_shrinker m)
     | App (rt, m, at, n, e) ->
       (match create_lit rt with
