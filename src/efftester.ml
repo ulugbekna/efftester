@@ -838,7 +838,6 @@ module GeneratorsWithContext (Ctx : Context) = struct
   open StaticGenerators
 
   (* Type-directed literal generator *)
-  (* FIXME: literal gen is buggy, e.g., for goal type (int option) list *)
   let literal_gen t _eff _size =
     match t with
     | Unit -> Gen.return LitUnit
@@ -1585,12 +1584,14 @@ let rec tcheck env term =
        with Failure msg -> failwith msg)
     | Error msg -> failwith msg)
   | PatternMatch (typ, _matched_trm, cases, eff) ->
-    (* how to ensure that patterns can be applied to the matched term? *)
-    let has_type_mismatch =
-      List.exists (fun (_pat, body) -> not (typ = imm_type body)) cases
+    let has_type_mismatch typ1 typ2 = if types_compat typ1 typ2 then false else true in
+    let has_type_mismatch_lst =
+      List.exists (fun (_pat, body) -> has_type_mismatch typ (imm_type body)) cases
     in
-    if has_type_mismatch
-    then failwith "tcheck: PatternMatch type mismatches that of a case"
+    (* FIXME: it fails to typecheck with seed 430633514
+      Debugging using printing shows that types are same but it still fails *)
+    if has_type_mismatch_lst
+    then failwith "tcheck: PatternMatch has a type mismatch"
     else (typ, eff)
   | App (rt, m, at, n, ceff) ->
     let mtyp, meff = tcheck env m in
