@@ -151,7 +151,7 @@ type term =
   | Variable of etype * variable
   | ListTrm of etype * term list * eff
   (* [Constructor (type, name, payload_lst)] is used to construct ADT variants *)
-  | Constructor of etype * string * term list
+  | Constructor of etype * string * term list * eff
   (* [PatternMatch typ matched_trm cases eff] *)
   | PatternMatch of etype * term * (pattern * term) list * eff
   | Lambda of etype * variable * etype * term
@@ -163,8 +163,8 @@ and pattern =
   | PattVar of variable
   | PattConstr of etype * string * pattern list
 
-let some typ payload = Constructor (typ, "Some", [ payload ])
-let none typ = Constructor (typ, "None", [])
+let some typ payload eff = Constructor (typ, "Some", [ payload ], eff)
+let none typ = Constructor (typ, "None", [], (false, false))
 
 (** Printing functions  *)
 
@@ -252,7 +252,7 @@ let rec term_to_ocaml ?(typeannot = true) term =
       else Printf.bprintf sb "%s" x
     in
     match t with
-    | Constructor (_, name, payload_lst) ->
+    | Constructor (_, name, payload_lst, _) ->
       (match payload_lst with
       | [] -> Printf.bprintf sb "%s" name
       | trms ->
@@ -411,7 +411,8 @@ let rec types_compat t t' =
 
 let imm_eff t =
   match t with
-  | Lit _ | Variable (_, _) | Constructor (_, _, _) | Lambda (_, _, _, _) -> no_eff
+  | Lit _ | Variable (_, _) | Lambda (_, _, _, _) -> no_eff
+  | Constructor (_, _, _, e) -> e
   | ListTrm (_, _, e) -> e
   | PatternMatch (_, _, _, e) -> e
   | App (_, _, _, _, e) -> e
@@ -432,7 +433,7 @@ let imm_type t =
   | Lit l -> lit_type l
   | Variable (typ, _) -> typ
   | ListTrm (typ, _, _) -> typ
-  | Constructor (typ, _, _) -> typ
+  | Constructor (typ, _, _, _) -> typ
   | PatternMatch (typ, _, _, _) -> typ
   | Lambda (typ, _, _, _) -> typ
   | App (typ, _, _, _, _) -> typ
@@ -1200,7 +1201,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
           term_gen_sized env t' eff (size - 1) >>= fun trm ->
           (match trm with
           | None -> return None
-          | Some trm' -> return (Some (some t trm')))
+          | Some trm' -> return (Some (some t trm' eff)))
         | _ -> failwith "option_intro_rules: impossible option adt_constr name")
       | _ -> return None
     in
@@ -1367,7 +1368,7 @@ module Shrinker = struct
     | Lit _ -> false
     | Variable (_, y) -> x = y
     | ListTrm (_, lst, _) -> has_fv lst
-    | Constructor (_typ, _name, args) -> has_fv args
+    | Constructor (_typ, _name, args, _eff) -> has_fv args
     | PatternMatch (_typ, match_trm, cases, _eff) ->
       let fv_in_case (pat, trm) = if occurs_in_pat x pat then false else fv x trm in
       fv x match_trm || List.exists fv_in_case cases
@@ -1385,9 +1386,9 @@ module Shrinker = struct
     | ListTrm (typ, lst, eff) ->
       let new_lst = List.map (fun trm -> alpharename trm x y) lst in
       ListTrm (typ, new_lst, eff)
-    | Constructor (typ, name, payload_lst) ->
+    | Constructor (typ, name, payload_lst, eff) ->
       let new_payload_lst = List.map (fun trm -> alpharename trm x y) payload_lst in
-      Constructor (typ, name, new_payload_lst)
+      Constructor (typ, name, new_payload_lst, eff)
     | PatternMatch (typ, matched_trm, cases, eff) ->
       let matched_trm' = alpharename matched_trm x y in
       let cases' =
@@ -1423,9 +1424,9 @@ module Shrinker = struct
       | Some c -> Iter.return c
       | _ -> Iter.empty)
     | ListTrm (t, lst, e) -> Iter.map (fun l -> ListTrm (t, l, e)) (Shrink.list lst)
-    | Constructor (typ, name, args) ->
+    | Constructor (typ, name, args, eff) ->
       let open Iter in
-      list_elems term_shrinker args >|= fun args' -> Constructor (typ, name, args')
+      list_elems term_shrinker args >|= fun args' -> Constructor (typ, name, args', eff)
     | PatternMatch (typ, matched_trm, cases, eff) ->
       let open Iter in
       term_shrinker matched_trm >>= fun matched_trm' ->
@@ -1575,12 +1576,12 @@ let rec tcheck env term =
         lst;
       (typ, eff)
     | _ -> failwith "tcheck: ListTrm must have a list type")
-  | Constructor (typ, name, payload_lst) ->
+  | Constructor (typ, name, payload_lst, eff) ->
     (match check_opt_invariants (typ, name, payload_lst) with
     | Ok _ ->
       (try
          List.iter (fun trm -> tcheck env trm |> ignore) payload_lst;
-         (typ, no_eff)
+         (typ, eff)
        with Failure msg -> failwith msg)
     | Error msg -> failwith msg)
   | PatternMatch (typ, _matched_trm, cases, eff) ->
