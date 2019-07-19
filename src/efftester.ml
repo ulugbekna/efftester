@@ -1414,8 +1414,52 @@ module Shrinker = struct
     | _ -> Iter.empty
   ;;
 
+  let rec term_size = function
+    | Variable _ -> 1
+    | Lit lit ->
+      (match lit with
+      | LitUnit -> 1
+      | LitInt n -> 1 + abs n (* we want shrinkers that reduce n to reduce size *)
+      | LitFloat x -> 1 + int_of_float (ceil (abs_float x))
+      | LitBool _ -> 1
+      | LitStr s -> 1 + String.length s)
+    | ListTrm (_, ms, _) | Constructor (_, _, ms, _) ->
+      List.fold_left ( + ) 1 (List.map term_size ms)
+    | PatternMatch (_, m, cases, _) ->
+      (* ignore pattern sizes for now *)
+      let case_size (_pat, m) = term_size m in
+      List.fold_left ( + ) 1 (term_size m :: List.map case_size cases)
+    | Lambda (_, _, _, m) -> 1 + term_size m
+    | App (_, m, _, n, _) | Let (_, _, m, n, _, _) -> 1 + term_size m + term_size n
+    | If (_, m, m1, m2, _) -> 1 + term_size m + term_size m1 + term_size m2
+  ;;
+
+  (* the simplest possible term at a given type *)
+  let rec minimal_term ty =
+    match ty with
+    | Typevar _ -> raise Not_found
+    | Unit -> Lit LitUnit
+    | Int -> Lit (LitInt 0)
+    | Float -> Lit (LitFloat 0.)
+    | Bool -> Lit (LitBool true)
+    | String -> Lit (LitStr "")
+    | Option _ -> Constructor (ty, "None", [], no_eff)
+    | List _ -> ListTrm (ty, [], no_eff)
+    | Fun (input_t, _, output_t) ->
+      let body = minimal_term output_t in
+      Lambda (ty, "x", input_t, body)
+  ;;
+
   let rec term_shrinker term =
     let ( <+> ) = Iter.( <+> ) in
+    (match minimal_term (imm_type term) with
+    | exception Not_found -> Iter.empty
+    | mini ->
+      (* checking that the minimal term has a strictly-smaller size
+           prevents us from shrinking a minimal term into itself,
+           which would loop infinitely *)
+      if term_size mini < term_size term then Iter.return mini else Iter.empty)
+    <+>
     match term with
     | Lit l -> shrink_lit l
     | Variable (t, _) ->
