@@ -1573,7 +1573,7 @@ let rec tcheck env term =
     | List elem_typ ->
       List.iter
         (fun e ->
-          if not (imm_type e = elem_typ)
+          if not (types_compat (imm_type e) elem_typ)
           then failwith "tcheck: a list type mismatches its element's type")
         lst;
       (typ, eff)
@@ -1586,13 +1586,19 @@ let rec tcheck env term =
          (typ, eff)
        with Failure msg -> failwith msg)
     | Error msg -> failwith msg)
-  | PatternMatch (typ, _matched_trm, cases, eff) ->
+  | PatternMatch (typ, matched_trm, cases, eff) ->
+    let has_pat_type_mismatch pat =
+      match pat with
+      | PattVar _ -> false
+      | PattConstr (typ, _, _) -> types_compat (imm_type matched_trm) typ
+    in
     let has_type_mismatch typ1 typ2 = if types_compat typ1 typ2 then false else true in
     let has_type_mismatch_lst =
-      List.exists (fun (_pat, body) -> has_type_mismatch typ (imm_type body)) cases
+      List.exists
+        (fun (pat, body) ->
+          has_type_mismatch (imm_type body) typ || has_pat_type_mismatch pat)
+        cases
     in
-    (* FIXME: it fails to typecheck with seed 430633514
-      Debugging using printing shows that types are same but it still fails *)
     if has_type_mismatch_lst
     then failwith "tcheck: PatternMatch has a type mismatch"
     else (typ, eff)
