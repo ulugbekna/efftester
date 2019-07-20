@@ -1343,17 +1343,6 @@ end
 (** Shrinker and actual testing *)
 
 module Shrinker = struct
-  let create_lit t =
-    let to_term s = Some (Lit s) in
-    match t with
-    | Unit -> to_term LitUnit
-    | Int -> to_term (LitInt (Gen.generate1 small_int.gen))
-    | Float -> to_term (LitFloat (Gen.generate1 float.gen))
-    | Bool -> to_term (LitBool (Gen.generate1 bool.gen))
-    | String -> to_term (LitStr (Gen.generate1 StaticGenerators.string_gen))
-    | Option _ | List _ | Fun _ | Typevar _ -> None
-  ;;
-
   let rec occurs_in_pat var pat =
     match pat with
     | PattVar x -> x = var
@@ -1414,14 +1403,55 @@ module Shrinker = struct
     | _ -> Iter.empty
   ;;
 
+  let rec term_size = function
+    | Variable _ -> 1
+    | Lit lit ->
+      (match lit with
+      | LitUnit -> 1
+      | LitInt n -> 1 + abs n (* we want shrinkers that reduce n to reduce size *)
+      | LitFloat x -> 1 + int_of_float (ceil (abs_float x))
+      | LitBool _ -> 1
+      | LitStr s -> 1 + String.length s)
+    | ListTrm (_, ms, _) | Constructor (_, _, ms, _) ->
+      List.fold_left ( + ) 1 (List.map term_size ms)
+    | PatternMatch (_, m, cases, _) ->
+      (* ignore pattern sizes for now *)
+      let case_size (_pat, m) = term_size m in
+      List.fold_left ( + ) 1 (term_size m :: List.map case_size cases)
+    | Lambda (_, _, _, m) -> 1 + term_size m
+    | App (_, m, _, n, _) | Let (_, _, m, n, _, _) -> 1 + term_size m + term_size n
+    | If (_, m, m1, m2, _) -> 1 + term_size m + term_size m1 + term_size m2
+  ;;
+
+  (* the simplest possible term at a given type *)
+  let rec minimal_term ty =
+    match ty with
+    | Typevar _ -> raise Not_found
+    | Unit -> Lit LitUnit
+    | Int -> Lit (LitInt 0)
+    | Float -> Lit (LitFloat 0.)
+    | Bool -> Lit (LitBool true)
+    | String -> Lit (LitStr "")
+    | Option _ -> Constructor (ty, "None", [], no_eff)
+    | List _ -> ListTrm (ty, [], no_eff)
+    | Fun (input_t, _, output_t) ->
+      let body = minimal_term output_t in
+      Lambda (ty, "x", input_t, body)
+  ;;
+
   let rec term_shrinker term =
     let ( <+> ) = Iter.( <+> ) in
+    (match minimal_term (imm_type term) with
+    | exception Not_found -> Iter.empty
+    | mini ->
+      (* checking that the minimal term has a strictly-smaller size
+           prevents us from shrinking a minimal term into itself,
+           which would loop infinitely *)
+      if term_size mini < term_size term then Iter.return mini else Iter.empty)
+    <+>
     match term with
     | Lit l -> shrink_lit l
-    | Variable (t, _) ->
-      (match create_lit t with
-      | Some c -> Iter.return c
-      | _ -> Iter.empty)
+    | Variable (_, _) -> Iter.empty
     | ListTrm (t, lst, e) -> Iter.map (fun l -> ListTrm (t, l, e)) (Shrink.list lst)
     | Constructor (typ, name, args, eff) ->
       let open Iter in
@@ -1436,10 +1466,7 @@ module Shrinker = struct
           >|= fun c' -> PatternMatch (typ, matched_trm, c', eff) )
     | Lambda (t, x, s, m) -> Iter.map (fun m' -> Lambda (t, x, s, m')) (term_shrinker m)
     | App (rt, m, at, n, e) ->
-      (match create_lit rt with
-      | Some c -> Iter.return c
-      | None -> Iter.empty)
-      <+> (if types_compat at rt then Iter.return n else Iter.empty)
+      (if types_compat at rt then Iter.return n else Iter.empty)
       <+> (match m with
           | App (_, _, at', n', _) when types_compat at' rt -> Iter.return n'
           | Lambda (_, x, s, m') ->
@@ -1458,26 +1485,20 @@ module Shrinker = struct
       <+> Iter.map (fun m' -> App (rt, m', at, n, e)) (term_shrinker m)
       <+> Iter.map (fun n' -> App (rt, m, at, n', e)) (term_shrinker n)
     | Let (x, t, m, n, s, e) ->
-      (match create_lit s with
-      | Some c -> Iter.return c
-      | _ -> Iter.empty)
-      <+> (match (fv x n, m) with
-          | false, Let (x', t', m', _, _, _) ->
-            if fv x' n
-            then (
-              (* potential var capt.*)
-              let y = newvar () in
-              Iter.of_list [ n; Let (y, t', m', n, s, e) ])
-            else Iter.of_list [ n; Let (x', t', m', n, s, e) ]
-          | false, _ -> Iter.return n
-          | true, _ -> Iter.empty)
+      (match (fv x n, m) with
+      | false, Let (x', t', m', _, _, _) ->
+        if fv x' n
+        then (
+          (* potential var capt.*)
+          let y = newvar () in
+          Iter.of_list [ n; Let (y, t', m', n, s, e) ])
+        else Iter.of_list [ n; Let (x', t', m', n, s, e) ]
+      | false, _ -> Iter.return n
+      | true, _ -> Iter.empty)
       <+> Iter.map (fun m' -> Let (x, t, m', n, s, e)) (term_shrinker m)
       <+> Iter.map (fun n' -> Let (x, t, m, n', s, e)) (term_shrinker n)
     | If (t, b, m, n, e) ->
-      (match create_lit t with
-      | Some c -> Iter.return c
-      | _ -> Iter.empty)
-      <+> Iter.of_list [ n; m ]
+      Iter.of_list [ n; m ]
       <+> (match b with
           | Lit _ -> Iter.empty
           | Variable (_, _) -> Iter.empty
