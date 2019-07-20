@@ -187,13 +187,12 @@ let rec type_to_ocaml ?(effannot = false) ppf = function
 let str_of_printer printer input =
   let buf = Buffer.create 20 in
   let ppf = Format.formatter_of_buffer buf in
-  Format.fprintf ppf "@[<2>%a@]" printer input;
+  Format.fprintf ppf "@[<hv2>@;<0 -2>%a@]" printer input;
   Format.pp_print_flush ppf ();
   Buffer.contents buf
+;;
 
-let type_to_str ?(effannot = false) typ =
-  str_of_printer (type_to_ocaml ~effannot) typ
-
+let type_to_str ?(effannot = false) typ = str_of_printer (type_to_ocaml ~effannot) typ
 let eff_to_str ((ef, ev) : eff) = Printf.sprintf "(%B,%B)" ef ev
 
 (* BNF grammar:
@@ -224,7 +223,8 @@ let eff_to_str ((ef, ev) : eff) = Printf.sprintf "(%B,%B)" ef ev
 let rec term_to_ocaml ?(typeannot = true) ppf term =
   let lit_to_ocaml_sb ppf = function
     | LitUnit -> Format.fprintf ppf "()"
-    | LitInt i -> if i < 0 then Format.fprintf ppf "(%d)" i else Format.fprintf ppf "%d" i
+    | LitInt i ->
+      if i < 0 then Format.fprintf ppf "(%d)" i else Format.fprintf ppf "%d" i
     | LitFloat f ->
       if f <= 0. then Format.fprintf ppf "(%F)" f else Format.fprintf ppf "%F" f
     (* We want parentheses when f equals (-0.);
@@ -243,36 +243,54 @@ let rec term_to_ocaml ?(typeannot = true) ppf term =
     | Constructor (_, name, payload_lst, _) ->
       (match payload_lst with
       | [] -> Format.fprintf ppf "%s" name
+      | [ tm ] -> Format.fprintf ppf "@[<2>%s@ %a@]" name arg tm
       | trms ->
         let pp_sep ppf () = Format.fprintf ppf ", " in
-        Format.fprintf ppf "(%s (%a))" name (Format.pp_print_list ~pp_sep exp) trms)
+        Format.fprintf ppf "@[<2>%s@ (%a)@]" name (Format.pp_print_list ~pp_sep exp) trms)
     | PatternMatch (_, match_trm, branches, _) ->
       let case_to_str ppf (pattern, body) =
-        Format.fprintf ppf "| %a -> %a" pattern_to_ocaml pattern exp body
+        Format.fprintf ppf "@;| @[<2>%a@ ->@ %a@]" pattern_to_ocaml pattern exp body
       in
       Format.fprintf
         ppf
-        "(match %a with %a)"
+        "@[<hv>@[@[<2>(match@ %a@]@ with@]%a)@]"
         exp
         match_trm
         (fun ppf branches -> List.iter (case_to_str ppf) branches)
         branches
-    | Lambda (_, x, t, m) -> Format.fprintf ppf "(fun %a -> %a)" print_binder (x, t) exp m
+    | Lambda (_, x, t, m) ->
+      Format.fprintf ppf "@[<2>fun %a ->@ %a@]" print_binder (x, t) exp m
     | Let (x, t, m, n, _, _) ->
-      Format.fprintf ppf "let %a = %a in %a" print_binder (x, t) exp m exp n
-    | If (_, b, m, n, _) -> Format.fprintf ppf "if %a then %a else %a" exp b exp m exp n
+      Format.fprintf
+        ppf
+        "@[<2>@[<hv2>let %a =@ %a@]@;<1 -2>in %a@]"
+        print_binder
+        (x, t)
+        exp
+        m
+        exp
+        n
+    | If (_, b, m, n, _) ->
+      Format.fprintf ppf "@[<2>if %a@;<1 -2>then %a@;<1 -2>else %a@]" exp b exp m exp n
     | Lit _ | Variable _ | ListTrm _ | App _ -> app ppf t
   and app ppf t =
-    match t with
-    | App (_, m, _, n, _) -> Format.fprintf ppf "%a %a" app m arg n
-    | _ -> arg ppf t
+    let rec app_left ppf = function
+      | App (_, m, _, n, _) -> Format.fprintf ppf "%a@ %a" app_left m arg n
+      | t -> arg ppf t
+    in
+    Format.fprintf ppf "@[<2>%a@]" app_left t
   and arg ppf t =
     match t with
     | Lit l -> lit_to_ocaml_sb ppf l
     | Variable (_, s) -> Format.fprintf ppf "%s" s
     | ListTrm (_, ls, _) ->
-      let print_lst ppf ls = List.iter (fun elt -> Format.fprintf ppf "%a; " app elt) ls in
-      Format.fprintf ppf "[%a]" print_lst ls
+      let print_lst ppf ls =
+        List.iter (fun elt -> Format.fprintf ppf "%a;@ " app elt) ls
+      in
+      (match ls with
+      | [] -> Format.fprintf ppf "[]"
+      | [ t ] -> Format.fprintf ppf "[%a]" exp t
+      | _ -> Format.fprintf ppf "[@[<hv>%a@]]" print_lst ls)
     | _ -> Format.fprintf ppf "(%a)" exp t
   in
   exp ppf term
@@ -292,8 +310,7 @@ and pattern_to_ocaml ppf patt =
     Format.fprintf ppf "%s%a" name print_patt_list patt_lst
 ;;
 
-let term_to_str ?typeannot term =
-  str_of_printer (term_to_ocaml ?typeannot) term
+let term_to_str ?typeannot term = str_of_printer (term_to_ocaml ?typeannot) term
 
 (** Effect system function *)
 
