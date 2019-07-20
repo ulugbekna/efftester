@@ -18,22 +18,6 @@ let make_logger file_path =
 
 let no_logger = Printf.ifprintf stdout
 
-let rec bprint_list ~sep elt_printer buf lst =
-  match lst with
-  | [] -> ()
-  | [ elt ] -> elt_printer buf elt
-  | elt :: rest ->
-    Printf.bprintf
-      buf
-      "%a%a%a"
-      elt_printer
-      elt
-      sep
-      ()
-      (bprint_list ~sep elt_printer)
-      rest
-;;
-
 (* [shrink_list_elems shrink l yield] shrinks a list of elements [l] given a shrinker [shrink]
   TODO: use QCheck version of [shrink_list_elems] when @gasche's PR gets merged *)
 let shrink_list_elems shrink l yield =
@@ -168,29 +152,29 @@ let none typ = Constructor (typ, "None", [], (false, false))
 
 (** Printing functions  *)
 
-let rec type_to_ocaml ?(effannot = false) sb = function
-  | Typevar a -> Printf.bprintf sb "'a%d" a
-  | Unit -> Printf.bprintf sb "unit"
-  | Int -> Printf.bprintf sb "int"
-  | Float -> Printf.bprintf sb "float"
-  | Bool -> Printf.bprintf sb "bool"
-  | String -> Printf.bprintf sb "string"
-  | Option e -> Printf.bprintf sb "(%a) option" (type_to_ocaml ~effannot) e
-  | List s -> Printf.bprintf sb "(%a) list" (type_to_ocaml ~effannot) s
+let rec type_to_ocaml ?(effannot = false) ppf = function
+  | Typevar a -> Format.fprintf ppf "'a%d" a
+  | Unit -> Format.fprintf ppf "unit"
+  | Int -> Format.fprintf ppf "int"
+  | Float -> Format.fprintf ppf "float"
+  | Bool -> Format.fprintf ppf "bool"
+  | String -> Format.fprintf ppf "string"
+  | Option e -> Format.fprintf ppf "(%a) option" (type_to_ocaml ~effannot) e
+  | List s -> Format.fprintf ppf "(%a) list" (type_to_ocaml ~effannot) s
   | Fun (s, e, t) ->
-    let print_simple_type sb s =
+    let print_simple_type ppf s =
       match s with
       | Unit | Int | Float | Bool | String | Option _ | List _ | Typevar _ ->
-        Printf.bprintf sb "%a" (type_to_ocaml ~effannot) s
-      | Fun _ -> Printf.bprintf sb "(%a)" (type_to_ocaml ~effannot) s
+        Format.fprintf ppf "%a" (type_to_ocaml ~effannot) s
+      | Fun _ -> Format.fprintf ppf "(%a)" (type_to_ocaml ~effannot) s
     in
-    let print_effannot sb = function
+    let print_effannot ppf = function
       | None -> ()
-      | Some (ef, ev) -> Printf.bprintf sb "%B/%B" ef ev
+      | Some (ef, ev) -> Format.fprintf ppf "%B/%B" ef ev
     in
-    let print_type sb t = Printf.bprintf sb "%a" (type_to_ocaml ~effannot) t in
-    Printf.bprintf
-      sb
+    let print_type ppf t = Format.fprintf ppf "%a" (type_to_ocaml ~effannot) t in
+    Format.fprintf
+      ppf
       "%a -%a> %a"
       print_simple_type
       s
@@ -200,11 +184,15 @@ let rec type_to_ocaml ?(effannot = false) sb = function
       t
 ;;
 
+let str_of_printer printer input =
+  let buf = Buffer.create 20 in
+  let ppf = Format.formatter_of_buffer buf in
+  Format.fprintf ppf "@[<2>%a@]" printer input;
+  Format.pp_print_flush ppf ();
+  Buffer.contents buf
+
 let type_to_str ?(effannot = false) typ =
-  let sb = Buffer.create 20 in
-  let () = type_to_ocaml ~effannot sb typ in
-  Buffer.contents sb
-;;
+  str_of_printer (type_to_ocaml ~effannot) typ
 
 let eff_to_str ((ef, ev) : eff) = Printf.sprintf "(%B,%B)" ef ev
 
@@ -233,78 +221,79 @@ let eff_to_str ((ef, ev) : eff) = Printf.sprintf "(%B,%B)" ef ev
    The following prettyprinter is structured according to this grammar to cut down on
    the needless parentheses
 *)
-let rec term_to_ocaml ?(typeannot = true) term =
-  let lit_to_ocaml_sb sb = function
-    | LitUnit -> Printf.bprintf sb "()"
-    | LitInt i -> if i < 0 then Printf.bprintf sb "(%d)" i else Printf.bprintf sb "%d" i
+let rec term_to_ocaml ?(typeannot = true) ppf term =
+  let lit_to_ocaml_sb ppf = function
+    | LitUnit -> Format.fprintf ppf "()"
+    | LitInt i -> if i < 0 then Format.fprintf ppf "(%d)" i else Format.fprintf ppf "%d" i
     | LitFloat f ->
-      if f <= 0. then Printf.bprintf sb "(%F)" f else Printf.bprintf sb "%F" f
+      if f <= 0. then Format.fprintf ppf "(%F)" f else Format.fprintf ppf "%F" f
     (* We want parentheses when f equals (-0.);
         Without parentheses -0. is interpreted as an arithmetic operation function. *)
-    | LitBool b -> Printf.bprintf sb "%B" b
-    | LitStr s -> Printf.bprintf sb "%S" s
+    | LitBool b -> Format.fprintf ppf "%B" b
+    | LitStr s -> Format.fprintf ppf "%S" s
   in
-  let rec exp sb t =
+  let rec exp ppf t =
     let type_to_ocaml_noannot = type_to_ocaml ~effannot:false in
-    let print_binder sb (x, t) =
+    let print_binder ppf (x, t) =
       if typeannot
-      then Printf.bprintf sb "(%s: %a)" x type_to_ocaml_noannot t
-      else Printf.bprintf sb "%s" x
+      then Format.fprintf ppf "(%s: %a)" x type_to_ocaml_noannot t
+      else Format.fprintf ppf "%s" x
     in
     match t with
     | Constructor (_, name, payload_lst, _) ->
       (match payload_lst with
-      | [] -> Printf.bprintf sb "%s" name
+      | [] -> Format.fprintf ppf "%s" name
       | trms ->
-        let sep sb () = Printf.bprintf sb ", " in
-        Printf.bprintf sb "(%s (%a))" name (bprint_list ~sep exp) trms)
+        let pp_sep ppf () = Format.fprintf ppf ", " in
+        Format.fprintf ppf "(%s (%a))" name (Format.pp_print_list ~pp_sep exp) trms)
     | PatternMatch (_, match_trm, branches, _) ->
-      let case_to_str sb (pattern, body) =
-        Printf.bprintf sb "| %a -> %a" pattern_to_ocaml pattern exp body
+      let case_to_str ppf (pattern, body) =
+        Format.fprintf ppf "| %a -> %a" pattern_to_ocaml pattern exp body
       in
-      Printf.bprintf
-        sb
+      Format.fprintf
+        ppf
         "(match %a with %a)"
         exp
         match_trm
-        (fun sb branches -> List.iter (case_to_str sb) branches)
+        (fun ppf branches -> List.iter (case_to_str ppf) branches)
         branches
-    | Lambda (_, x, t, m) -> Printf.bprintf sb "(fun %a -> %a)" print_binder (x, t) exp m
+    | Lambda (_, x, t, m) -> Format.fprintf ppf "(fun %a -> %a)" print_binder (x, t) exp m
     | Let (x, t, m, n, _, _) ->
-      Printf.bprintf sb "let %a = %a in %a" print_binder (x, t) exp m exp n
-    | If (_, b, m, n, _) -> Printf.bprintf sb "if %a then %a else %a" exp b exp m exp n
-    | Lit _ | Variable _ | ListTrm _ | App _ -> app sb t
-  and app sb t =
+      Format.fprintf ppf "let %a = %a in %a" print_binder (x, t) exp m exp n
+    | If (_, b, m, n, _) -> Format.fprintf ppf "if %a then %a else %a" exp b exp m exp n
+    | Lit _ | Variable _ | ListTrm _ | App _ -> app ppf t
+  and app ppf t =
     match t with
-    | App (_, m, _, n, _) -> Printf.bprintf sb "%a %a" app m arg n
-    | _ -> arg sb t
-  and arg sb t =
+    | App (_, m, _, n, _) -> Format.fprintf ppf "%a %a" app m arg n
+    | _ -> arg ppf t
+  and arg ppf t =
     match t with
-    | Lit l -> lit_to_ocaml_sb sb l
-    | Variable (_, s) -> Printf.bprintf sb "%s" s
+    | Lit l -> lit_to_ocaml_sb ppf l
+    | Variable (_, s) -> Format.fprintf ppf "%s" s
     | ListTrm (_, ls, _) ->
-      let print_lst sb ls = List.iter (fun elt -> Printf.bprintf sb "%a; " app elt) ls in
-      Printf.bprintf sb "[%a]" print_lst ls
-    | _ -> Printf.bprintf sb "(%a)" exp t
+      let print_lst ppf ls = List.iter (fun elt -> Format.fprintf ppf "%a; " app elt) ls in
+      Format.fprintf ppf "[%a]" print_lst ls
+    | _ -> Format.fprintf ppf "(%a)" exp t
   in
-  let sb = Buffer.create 80 in
-  let () = exp sb term in
-  Buffer.contents sb
+  exp ppf term
 
-and pattern_to_ocaml sb patt =
-  let print_patt_list sb patt_lst =
+and pattern_to_ocaml ppf patt =
+  let print_patt_list ppf patt_lst =
     match patt_lst with
     | [] -> ()
-    | [ patt ] -> Printf.bprintf sb " %a" pattern_to_ocaml patt
+    | [ patt ] -> Format.fprintf ppf " %a" pattern_to_ocaml patt
     | _patt_lst ->
-      let sep sb () = Printf.bprintf sb ", " in
-      Printf.bprintf sb " (%a)" (bprint_list ~sep pattern_to_ocaml) patt_lst
+      let pp_sep ppf () = Format.fprintf ppf ", " in
+      Format.fprintf ppf " (%a)" (Format.pp_print_list ~pp_sep pattern_to_ocaml) patt_lst
   in
   match patt with
-  | PattVar v -> Printf.bprintf sb "%s" v
+  | PattVar v -> Format.fprintf ppf "%s" v
   | PattConstr (_typ, name, patt_lst) ->
-    Printf.bprintf sb "%s%a" name print_patt_list patt_lst
+    Format.fprintf ppf "%s%a" name print_patt_list patt_lst
 ;;
+
+let term_to_str ?typeannot term =
+  str_of_printer (term_to_ocaml ?typeannot) term
 
 (** Effect system function *)
 
@@ -960,7 +949,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
               ^ " t is "
               ^ type_to_str ~effannot:true t
               ^ " f is "
-              ^ term_to_ocaml ~typeannot:false f
+              ^ term_to_str ~typeannot:false f
               ^ " imm_type f is "
               ^ type_to_str ~effannot:true (imm_type f)))
     in
@@ -1749,7 +1738,7 @@ let rec tcheck env term =
               failwith
                 ("tcheck: If's else branch type disagrees with annotation: "
                 ^ "  term is "
-                ^ term_to_ocaml ~typeannot:false term
+                ^ term_to_str ~typeannot:false term
                 ^ "  ntyp is "
                 ^ type_to_str ~effannot:true ntyp
                 ^ "  (subst sub ntyp) is "
@@ -1760,7 +1749,7 @@ let rec tcheck env term =
             failwith
               ("tcheck: If's then branch type disagrees with annotation: "
               ^ "  term is "
-              ^ term_to_ocaml ~typeannot:false term
+              ^ term_to_str ~typeannot:false term
               ^ "  mtyp is "
               ^ type_to_str ~effannot:true mtyp
               ^ "  (subst sub mtyp) is "
@@ -1771,7 +1760,7 @@ let rec tcheck env term =
           failwith
             ("tcheck: If's branch types do not unify:  "
             ^ "  term is "
-            ^ term_to_ocaml ~typeannot:false term
+            ^ term_to_str ~typeannot:false term
             ^ "  mtyp is "
             ^ type_to_str ~effannot:true mtyp
             ^ "  ntyp is "
@@ -1826,7 +1815,7 @@ module Arbitrary = struct
   *)
   let term_gen_by_type typ =
     make
-      ~print:(Print.option (term_to_ocaml ~typeannot:false))
+      ~print:(Print.option (term_to_str ~typeannot:false))
       ~shrink:Shrinker.shrinker
       (fun rs ->
         let module Gener = GeneratorsWithContext (FreshContext ()) in
@@ -1850,7 +1839,7 @@ module Arbitrary = struct
   let arb_dep_term_with_cache =
     make
       ~print:
-        (let printer (_typ, trm) = term_to_ocaml ~typeannot:false trm in
+        (let printer (_typ, trm) = term_to_str ~typeannot:false trm in
          Print.option printer)
       ~shrink:Shrinker.wrapped_dep_term_shrinker
       (fun rs ->
@@ -1908,7 +1897,7 @@ let can_compile_test ~with_logging =
         false
       | Some (_typ, trm) ->
         (try
-           let generated_prgm = term_to_ocaml trm in
+           let generated_prgm = term_to_str trm in
            logger "%s" generated_prgm;
            write_prog generated_prgm prgm_filename;
            0 = Sys.command ("ocamlc -w -5@20-26 " ^ prgm_filename)
@@ -1943,7 +1932,7 @@ let int_eq_test =
       ==>
       match topt with
       | None -> false
-      | Some t -> is_native_byte_equiv (term_to_ocaml (print_wrap t)))
+      | Some t -> is_native_byte_equiv (term_to_str (print_wrap t)))
 ;;
 
 let rand_eq_test typ =
@@ -1957,7 +1946,7 @@ let rand_eq_test typ =
       ==>
       match topt with
       | None -> false
-      | Some t -> is_native_byte_equiv (term_to_ocaml (rand_print_wrap typ t)))
+      | Some t -> is_native_byte_equiv (term_to_str (rand_print_wrap typ t)))
 ;;
 
 let dep_eq_test ~with_logging =
@@ -1978,7 +1967,7 @@ let dep_eq_test ~with_logging =
         logger "%s" "failwith(\"dep_t_opt = None\")";
         false
       | Some (typ, trm) ->
-        let generated_prgm = rand_print_wrap typ trm |> term_to_ocaml in
+        let generated_prgm = rand_print_wrap typ trm |> term_to_str in
         logger "%s" generated_prgm;
         is_native_byte_equiv generated_prgm)
 ;;
