@@ -152,36 +152,44 @@ let none typ = Constructor (typ, "None", [], (false, false))
 
 (** Printing functions  *)
 
-let rec type_to_ocaml ?(effannot = false) ppf = function
-  | Typevar a -> Format.fprintf ppf "'a%d" a
-  | Unit -> Format.fprintf ppf "unit"
-  | Int -> Format.fprintf ppf "int"
-  | Float -> Format.fprintf ppf "float"
-  | Bool -> Format.fprintf ppf "bool"
-  | String -> Format.fprintf ppf "string"
-  | Option e -> Format.fprintf ppf "(%a) option" (type_to_ocaml ~effannot) e
-  | List s -> Format.fprintf ppf "(%a) list" (type_to_ocaml ~effannot) s
-  | Fun (s, e, t) ->
-    let print_simple_type ppf s =
-      match s with
-      | Unit | Int | Float | Bool | String | Option _ | List _ | Typevar _ ->
-        Format.fprintf ppf "%a" (type_to_ocaml ~effannot) s
-      | Fun _ -> Format.fprintf ppf "(%a)" (type_to_ocaml ~effannot) s
+let type_to_ocaml ?(effannot = false) ppf etype =
+  let print_effannot ppf = function
+    | None -> ()
+    | Some (ef, ev) -> Format.fprintf ppf "%B/%B" ef ev
+  in
+  let rec print_type ppf t =
+    let rec loop ppf = function
+      | Fun (s, e, t) ->
+        Format.fprintf
+          ppf
+          "%a@ -%a> %a"
+          print_param_type
+          s
+          print_effannot
+          (if effannot then Some e else None)
+          loop
+          t
+      | other -> print_param_type ppf other
     in
-    let print_effannot ppf = function
-      | None -> ()
-      | Some (ef, ev) -> Format.fprintf ppf "%B/%B" ef ev
+    Format.fprintf ppf "@[<hv>%a@]" loop t
+  and print_param_type ppf t =
+    let rec loop ppf = function
+      | Option e -> Format.fprintf ppf "%a@ option" loop e
+      | List s -> Format.fprintf ppf "%a@ list" loop s
+      | other -> print_simple_type ppf other
     in
-    let print_type ppf t = Format.fprintf ppf "%a" (type_to_ocaml ~effannot) t in
-    Format.fprintf
-      ppf
-      "%a -%a> %a"
-      print_simple_type
-      s
-      print_effannot
-      (if effannot then Some e else None)
-      print_type
-      t
+    Format.fprintf ppf "@[<hov2>%a@]" loop t
+  and print_simple_type ppf = function
+    | Typevar a -> Format.fprintf ppf "'a%d" a
+    | Unit -> Format.fprintf ppf "unit"
+    | Int -> Format.fprintf ppf "int"
+    | Float -> Format.fprintf ppf "float"
+    | Bool -> Format.fprintf ppf "bool"
+    | String -> Format.fprintf ppf "string"
+    | (Fun _ | Option _ | List _) as non_simple ->
+      Format.fprintf ppf "@[<2>(%a)@]" print_type non_simple
+  in
+  print_type ppf etype
 ;;
 
 let str_of_printer printer input =
