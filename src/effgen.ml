@@ -5,6 +5,56 @@ open Effenv
 open Effunif
 open Effprint
 
+module GenOpt : sig
+  type 'a t = 'a option Gen.t
+
+  val map : ('a -> 'b) -> 'a t -> 'b t
+  val pure : 'a -> 'a t
+  val ( <*> ) : ('a -> 'b) t -> 'a t -> 'b t
+  val fail : unit -> 'a t
+  val return : 'a -> 'a t
+  val ( >>= ) : 'a t -> ('a -> 'b t) -> 'b t
+end = struct
+  type 'a t = 'a option Gen.t
+
+  let map f a =
+    let map_opt f = function
+      | None -> None
+      | Some v -> Some (f v)
+    in
+    Gen.map (map_opt f) a
+  ;;
+
+  let pure v = Gen.pure (Some v)
+
+  let ( <*> ) f a =
+    let apply_opt : ('a -> 'b) option -> 'a option -> 'b option =
+     fun f v ->
+      match (f, v) with
+      | None, _ | _, None -> None
+      | Some f, Some v -> Some (f v)
+    in
+    Gen.( <*> ) (Gen.map apply_opt f) a
+  ;;
+
+  let return v = Gen.return (Some v)
+  let fail () = Gen.return None
+
+  let ( >>= ) m f =
+    Gen.( >>= ) m (function
+        | None -> fail ()
+        | Some v -> f v)
+  ;;
+end
+
+module Syntax = struct
+  let return = Gen.return
+  let return_opt = GenOpt.return
+  let fail = GenOpt.fail
+  let ( >>= ) = Gen.( >>= )
+  let ( >>=? ) = GenOpt.( >>= )
+end
+
 (** Generators *)
 
 (* Provides operations over a local cache that is used by a generator  *)
@@ -191,13 +241,11 @@ module GeneratorsWithContext (Ctx : Context) = struct
   let rec lam_rules env u _eff size =
     (* lams have no immediate effect, so 'eff' param is ignored *)
     let gen s eff t =
-      Gen.(
-        var_gen >>= fun x ->
-        term_gen_sized (add_var x s env) t eff (size / 2) >>= function
-        | None -> return None
-        | Some m ->
-          let myeff = imm_eff m in
-          return (Some (Lambda (Fun (s, myeff, imm_type m), x, s, m))))
+      let open Syntax in
+      var_gen >>= fun x ->
+      term_gen_sized (add_var x s env) t eff (size / 2) >>=? fun m ->
+      let myeff = imm_eff m in
+      return_opt (Lambda (Fun (s, myeff, imm_type m), x, s, m))
     in
     match u with
     | Unit | Int | Float | Bool | String | Option _ | List _ | Typevar _ -> []
@@ -214,34 +262,30 @@ module GeneratorsWithContext (Ctx : Context) = struct
                  env |- f x : t
 *)
   and app_rules env t eff size =
-    let open Gen in
+    let open Syntax in
     let from_type funeff argeff s =
-      term_gen_sized env (Fun (s, eff, t)) funeff (size / 2) >>= function
-      | None -> Gen.return None
-      | Some f ->
-        term_gen_sized env s argeff (size / 2) >>= function
-        | None -> Gen.return None
-        | Some x ->
-          (match imm_type f with
-          | Fun (_, e, frange) ->
-            let funeff = imm_eff f in
-            let argeff = imm_eff x in
-            let ef, ev = eff_join e (eff_join funeff argeff) in
-            let eff' = (ef, ev || (fst funeff && fst argeff)) in
-            if eff_leq eff' eff
-            then Gen.return (Some (App (frange, f, imm_type x, x, eff')))
-            else
-              (*Gen.return None*)
-              failwith "app_rules generated application with too big effect"
-          | _ ->
-            failwith
-              ("app_rules generated application with non-function  "
-              ^ " t is "
-              ^ str_of_pp (pp_type ~effannot:true) t
-              ^ " f is "
-              ^ str_of_pp (pp_term ~typeannot:false) f
-              ^ " imm_type f is "
-              ^ str_of_pp (pp_type ~effannot:true) (imm_type f)))
+      term_gen_sized env (Fun (s, eff, t)) funeff (size / 2) >>=? fun f ->
+      term_gen_sized env s argeff (size / 2) >>=? fun x ->
+      match imm_type f with
+      | Fun (_, e, frange) ->
+        let funeff = imm_eff f in
+        let argeff = imm_eff x in
+        let ef, ev = eff_join e (eff_join funeff argeff) in
+        let eff' = (ef, ev || (fst funeff && fst argeff)) in
+        if eff_leq eff' eff
+        then return_opt (App (frange, f, imm_type x, x, eff'))
+        else
+          (*GenOpt.fail ()*)
+          failwith "app_rules generated application with too big effect"
+      | _ ->
+        failwith
+          ("app_rules generated application with non-function  "
+          ^ " t is "
+          ^ str_of_pp (pp_type ~effannot:true) t
+          ^ " f is "
+          ^ str_of_pp (pp_term ~typeannot:false) f
+          ^ " imm_type f is "
+          ^ str_of_pp (pp_type ~effannot:true) (imm_type f))
     in
     (* May generate eff in either operator or operand *)
     [ (4, type_gen (size / 2) >>= from_type eff no_eff);
@@ -289,35 +333,29 @@ module GeneratorsWithContext (Ctx : Context) = struct
     in
     (* recursively build application term argument by argument *)
     let rec apply term r_type n effacc = function
-      | [] -> Gen.return (Some term)
+      | [] -> Syntax.return_opt term
       | arg :: args ->
         (* arg 'n' may have effect 'eff' *)
         let myeff = if n = 0 then eff else no_eff in
-        Gen.( >>= )
-          (term_gen_sized env arg myeff (size / 2))
-          (function
-            | None -> Gen.return None
-            | Some a ->
-              (match r_type with
-              | Fun (_, funeff, new_rtype) ->
-                let my_actual_eff = eff_join funeff (imm_eff a) in
-                (* actual effect *)
-                let effacc' = eff_join my_actual_eff effacc in
-                if eff_leq effacc' eff
-                then
-                  apply
-                    (App (new_rtype, term, imm_type a, a, effacc'))
-                    new_rtype
-                    (n - 1)
-                    effacc'
-                    args
-                else
-                  failwith
-                    "apply: overly effectful program generated. This should not happen."
-              | _ ->
-                failwith
-                  "apply: non-function type expecting argument. This should not happen")
-            )
+        let open Syntax in
+        term_gen_sized env arg myeff (size / 2) >>=? fun a ->
+        (match r_type with
+        | Fun (_, funeff, new_rtype) ->
+          let my_actual_eff = eff_join funeff (imm_eff a) in
+          (* actual effect *)
+          let effacc' = eff_join my_actual_eff effacc in
+          if eff_leq effacc' eff
+          then
+            apply
+              (App (new_rtype, term, imm_type a, a, effacc'))
+              new_rtype
+              (n - 1)
+              effacc'
+              args
+          else
+            failwith "apply: overly effectful program generated. This should not happen."
+        | _ ->
+          failwith "apply: non-function type expecting argument. This should not happen")
     in
     let application s f =
       (* s is the unnormalized, effect-full type *)
@@ -342,28 +380,30 @@ module GeneratorsWithContext (Ctx : Context) = struct
           | v :: vs ->
             Gen.map2 (fun sub t -> (v, t) :: sub) (build_subst vs) (type_gen (sqrt size))
         in
-        Gen.( >>= ) (build_subst ftvs) (fun sub' ->
-            let goal_type = subst sub' goal_type in
-            let arg_types =
-              try get_arg_types goal_type (subst sub t)
-              with Failure exc ->
-                print_endline ("s is " ^ str_of_pp (pp_type ~effannot:true) s);
-                print_endline
-                  ("sub is "
-                  ^ Print.list
-                      (Print.pair
-                         (fun id -> "'a" ^ string_of_int id)
-                         (str_of_pp (pp_type ~effannot:true)))
-                      sub);
-                print_endline
-                  ("(subst sub s) is " ^ str_of_pp (pp_type ~effannot:true) (subst sub s));
-                print_endline ("t is " ^ str_of_pp (pp_type ~effannot:true) t);
-                failwith exc
-            in
-            let first_eff_index = first_eff goal_type in
-            Gen.(
-              (if first_eff_index = 0 then return 0 else int_bound (first_eff_index - 1))
-              >>= fun n -> apply f_term goal_type n no_eff arg_types))
+        let open Syntax in
+        build_subst ftvs >>= fun sub' ->
+        let goal_type = subst sub' goal_type in
+        let arg_types =
+          try get_arg_types goal_type (subst sub t)
+          with Failure exc ->
+            print_endline ("s is " ^ str_of_pp (pp_type ~effannot:true) s);
+            print_endline
+              ("sub is "
+              ^ Print.list
+                  (Print.pair
+                     (fun id -> "'a" ^ string_of_int id)
+                     (str_of_pp (pp_type ~effannot:true)))
+                  sub);
+            print_endline
+              ("(subst sub s) is " ^ str_of_pp (pp_type ~effannot:true) (subst sub s));
+            print_endline ("t is " ^ str_of_pp (pp_type ~effannot:true) t);
+            failwith exc
+        in
+        let index_gen =
+          let first_eff_index = first_eff goal_type in
+          if first_eff_index = 0 then return 0 else Gen.int_bound (first_eff_index - 1)
+        in
+        index_gen >>= fun n -> apply f_term goal_type n no_eff arg_types
     in
     let normalized_t = normalize_eff t in
     let suitable_vars = lookup_return normalized_t env in
@@ -414,73 +454,61 @@ module GeneratorsWithContext (Ctx : Context) = struct
            env |- let x:s = m in n : t
 *)
   and let_rules env t eff size =
-    let open Gen in
+    let open Syntax in
     let from_type s =
       var_gen >>= fun x ->
-      term_gen_sized env s eff (size / 2) >>= function
-      | None -> return None
-      | Some m ->
-        term_gen_sized (add_var x s env) t eff (size / 2) >>= function
-        | None -> return None
-        | Some n ->
-          let myeff = eff_join (imm_eff m) (imm_eff n) in
-          return (Some (Let (x, s, m, n, imm_type n, myeff)))
+      term_gen_sized env s eff (size / 2) >>=? fun m ->
+      term_gen_sized (add_var x s env) t eff (size / 2) >>=? fun n ->
+      let myeff = eff_join (imm_eff m) (imm_eff n) in
+      return_opt (Let (x, s, m, n, imm_type n, myeff))
     in
     [ (6, type_gen (size / 2) >>= from_type) ]
 
   and if_rules env t eff size =
-    let open Gen in
+    let open Syntax in
     let gen =
       (* predicate is generated *)
-      term_gen_sized env Bool eff (size / 3) >>= function
-      | None -> return None
-      | Some b ->
-        (* then branch is generated *)
-        term_gen_sized env t eff (size / 3) >>= function
-        | None -> return None
-        | Some m ->
-          let then_type = imm_type m in
-          (match unify then_type t with
-          | No_sol ->
-            failwith
-              ("if_rules: generated type "
-              ^ str_of_pp (pp_type ~effannot:true) then_type
-              ^ " in then branch does not unify with goal type "
-              ^ str_of_pp (pp_type ~effannot:true) t)
-          | Sol sub ->
-            let subst_t = subst sub t in
-            (* else branch is generated *)
-            term_gen_sized env subst_t eff (size / 3) >>= function
-            | None -> return None
-            | Some n ->
-              let else_type = imm_type n in
-              (match unify else_type subst_t with
-              | No_sol ->
-                failwith
-                  ("if_rules: generated else branch type "
-                  ^ str_of_pp (pp_type ~effannot:true) else_type
-                  ^ " does not unify with subst goal type "
-                  ^ str_of_pp (pp_type ~effannot:true) subst_t)
-              | Sol sub' ->
-                let mytype = subst sub' subst_t in
-                let myeff = eff_join (imm_eff b) (eff_join (imm_eff m) (imm_eff n)) in
-                return (Some (If (mytype, b, m, n, myeff)))))
+      term_gen_sized env Bool eff (size / 3) >>=? fun b ->
+      (* then branch is generated *)
+      term_gen_sized env t eff (size / 3) >>=? fun m ->
+      let then_type = imm_type m in
+      match unify then_type t with
+      | No_sol ->
+        failwith
+          ("if_rules: generated type "
+          ^ str_of_pp (pp_type ~effannot:true) then_type
+          ^ " in then branch does not unify with goal type "
+          ^ str_of_pp (pp_type ~effannot:true) t)
+      | Sol sub ->
+        let subst_t = subst sub t in
+        (* else branch is generated *)
+        term_gen_sized env subst_t eff (size / 3) >>=? fun n ->
+        let else_type = imm_type n in
+        (match unify else_type subst_t with
+        | No_sol ->
+          failwith
+            ("if_rules: generated else branch type "
+            ^ str_of_pp (pp_type ~effannot:true) else_type
+            ^ " does not unify with subst goal type "
+            ^ str_of_pp (pp_type ~effannot:true) subst_t)
+        | Sol sub' ->
+          let mytype = subst sub' subst_t in
+          let myeff = eff_join (imm_eff b) (eff_join (imm_eff m) (imm_eff n)) in
+          return_opt (If (mytype, b, m, n, myeff)))
     in
     [ (3, gen) ]
 
   and option_intro_rules env t eff size =
     let gen =
-      let open Gen in
+      let open Syntax in
       match t with
       | Option t' ->
         Gen.frequencyl [ (2, "Some"); (1, "None") ] >>= fun name ->
         (match name with
         | "None" -> return (Some (none t))
         | "Some" ->
-          term_gen_sized env t' eff (size - 1) >>= fun trm ->
-          (match trm with
-          | None -> return None
-          | Some trm' -> return (Some (some t trm' eff)))
+          term_gen_sized env t' eff (size - 1) >>=? fun trm ->
+          return_opt (some t trm eff)
         | _ -> failwith "option_intro_rules: impossible option adt_constr name")
       | _ -> return None
     in
@@ -488,48 +516,43 @@ module GeneratorsWithContext (Ctx : Context) = struct
 
   and option_elim_rules env t eff size =
     let gen =
-      let open Gen in
+      let open Syntax in
       StaticGenerators.basetype_gen >>= fun bt ->
-      term_gen_sized env (Option bt) eff (size / 3) >>= function
-      | None -> return None
-      | Some match_trm ->
-        var_gen >>= fun var_name ->
-        let extended_env = add_var var_name bt env in
-        term_gen_sized extended_env t eff (size / 3) >>= function
-        | None -> return None
-        | Some some_branch_trm ->
-          term_gen_sized env t eff (size / 3) >>= function
-          | None -> return None
-          | Some none_branch_trm ->
-            return
-            @@ Some
-                 (PatternMatch
-                    ( t,
-                      match_trm,
-                      [ (PattConstr (bt, "Some", [ PattVar var_name ]), some_branch_trm);
-                        (PattConstr (bt, "None", []), none_branch_trm)
-                      ],
-                      eff ))
+      term_gen_sized env (Option bt) eff (size / 3) >>=? fun match_trm ->
+      var_gen >>= fun var_name ->
+      let extended_env = add_var var_name bt env in
+      term_gen_sized extended_env t eff (size / 3) >>=? fun some_branch_trm ->
+      term_gen_sized env t eff (size / 3) >>=? fun none_branch_trm ->
+      return_opt
+        (PatternMatch
+           ( t,
+             match_trm,
+             [ (PattConstr (bt, "Some", [ PattVar var_name ]), some_branch_trm);
+               (PattConstr (bt, "None", []), none_branch_trm)
+             ],
+             eff ))
     in
     [ (3, gen) ]
 
   and list_intro_rules env goal_typ eff size : (int * term option Gen.t) list =
-    let open Gen in
+    let open Syntax in
     match goal_typ with
     | List elt_typ ->
       let gen =
         match elt_typ with
-        | Typevar _ -> return @@ Some (ListTrm (goal_typ, [], no_eff))
+        | Typevar _ -> return_opt (ListTrm (goal_typ, [], no_eff))
         | _ ->
           if size = 0
-          then return @@ Some (ListTrm (goal_typ, [], no_eff))
+          then return_opt (ListTrm (goal_typ, [], no_eff))
           else
-            int_bound (sqrt size) >>= fun lst_size ->
-            let lst_size = if lst_size = 0 then 1 else lst_size in
-            Gen.list_size
-              (return lst_size)
-              (term_gen_sized env elt_typ eff (size / (lst_size * 10)))
-            >>= fun opt_lst ->
+            Gen.int_bound (sqrt size) >>= fun lst_size ->
+            let elems_gen =
+              let lst_size = if lst_size = 0 then 1 else lst_size in
+              Gen.list_size
+                (return lst_size)
+                (term_gen_sized env elt_typ eff (size / (lst_size * 10)))
+            in
+            elems_gen >>= fun opt_lst ->
             let lst =
               List.fold_left
                 (fun acc_lst elt ->
@@ -539,7 +562,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
                 []
                 opt_lst
             in
-            return @@ Some (ListTrm (goal_typ, lst, eff))
+            return_opt (ListTrm (goal_typ, lst, eff))
       in
       [ (3, gen) ]
     | _ -> []
@@ -611,11 +634,8 @@ module GeneratorsWithContext (Ctx : Context) = struct
   let term_gen = list_permute_term_gen_rec_wrapper init_tri_env
 
   let dep_term_gen =
-    Gen.(
-      basetype_gen >>= fun typ ->
-      term_gen typ (true, false) >>= fun trm_opt ->
-      match trm_opt with
-      | None -> return None
-      | Some trm -> return (Some (typ, trm)))
+    let open Syntax in
+    basetype_gen >>= fun typ ->
+    term_gen typ (true, false) >>=? fun trm -> return_opt (typ, trm)
   ;;
 end
