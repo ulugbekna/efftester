@@ -154,8 +154,8 @@ let rec term_shrinker term =
             Iter.return (Let (x', t, m', App (rt, alpharename n' x x', at, n, e), rt, e)))
           else Iter.return (Let (x, t, m', App (rt, n', at, n, e), rt, e))
         | _ -> Iter.empty)
-    <+> Iter.map (fun m' -> App (rt, m', at, n, e)) (term_shrinker m)
-    <+> Iter.map (fun n' -> App (rt, m, at, n', e)) (term_shrinker n)
+    <+> Iter.map (fun (m', n') -> App (rt, m', at, n', e))
+          (Shrink.pair term_shrinker term_shrinker (m, n))
   | Let (x, t, m, n, s, e) ->
     (match (fv x n, m) with
     | false, Let (x', t', m', _, _, _) ->
@@ -167,8 +167,8 @@ let rec term_shrinker term =
       else Iter.of_list [ n; Let (x', t', m', n, s, e) ]
     | false, _ -> Iter.return n
     | true, _ -> Iter.empty)
-    <+> Iter.map (fun m' -> Let (x, t, m', n, s, e)) (term_shrinker m)
-    <+> Iter.map (fun n' -> Let (x, t, m, n', s, e)) (term_shrinker n)
+    <+> Iter.map (fun (m', n') -> Let (x, t, m', n', s, e))
+          (Shrink.pair term_shrinker term_shrinker (m, n))
   | If (t, b, m, n, e) ->
     Iter.of_list [ n; m ]
     <+> (match b with
@@ -177,9 +177,8 @@ let rec term_shrinker term =
         | _ ->
           let x = newvar () in
           Iter.return (Let (x, Bool, b, If (t, Variable (Bool, x), m, n, e), t, e)))
-    <+> Iter.map (fun b' -> If (t, b', m, n, e)) (term_shrinker b)
-    <+> Iter.map (fun m' -> If (t, b, m', n, e)) (term_shrinker m)
-    <+> Iter.map (fun n' -> If (t, b, m, n', e)) (term_shrinker n)
+    <+> Iter.map (fun (b', m', n') -> If (t, b', m', n', e))
+          (Shrink.triple term_shrinker term_shrinker term_shrinker (b, m, n))
 ;;
 
 let dep_term_shrinker (typ, term) = Iter.pair (Iter.return typ) (term_shrinker term)
