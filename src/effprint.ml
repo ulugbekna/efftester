@@ -1,12 +1,28 @@
 open Effast
 
-(** Printing functions  *)
-let pp_eff ppf (ef, ev) = Format.fprintf ppf "%B/%B" ef ev
+let str_of_pp printer input =
+  let buf = Buffer.create 20 in
+  let ppf = Format.formatter_of_buffer buf in
+  Format.fprintf ppf "@[<hv2>@;<0 -2>%a@]" printer input;
+  Format.pp_print_flush ppf ();
+  Buffer.contents buf
+;;
+
+let pp_pair pp1 pp2 ppf (v1, v2) = Format.fprintf ppf "@[(%a,@ %a)@]" pp1 v1 pp2 v2
+
+let pp_list pp ppf vs =
+  let pp_sep ppf () = Format.fprintf ppf ",@ " in
+  Format.fprintf ppf "[@[<hov>%a]@]" (Format.pp_print_list ~pp_sep pp) vs
+;;
 
 let pp_option pp ppf = function
   | None -> ()
   | Some v -> pp ppf v
 ;;
+
+let pp_eff ppf (ef, ev) = Format.fprintf ppf "%B/%B" ef ev
+let pp_var ppf x = Format.fprintf ppf "%s" x
+let pp_tvar ppf a = Format.fprintf ppf "'a%d" a
 
 let pp_type ?(effannot = false) ppf etype =
   let rec pp_type ppf t =
@@ -34,7 +50,7 @@ let pp_type ?(effannot = false) ppf etype =
     in
     Format.fprintf ppf "@[<hov2>%a@]" self t
   and pp_simple_type ppf = function
-    | Typevar a -> Format.fprintf ppf "'a%d" a
+    | Typevar a -> pp_tvar ppf a
     | Unit -> Format.fprintf ppf "unit"
     | Int -> Format.fprintf ppf "int"
     | Float -> Format.fprintf ppf "float"
@@ -46,13 +62,7 @@ let pp_type ?(effannot = false) ppf etype =
   pp_type ppf etype
 ;;
 
-let str_of_pp printer input =
-  let buf = Buffer.create 20 in
-  let ppf = Format.formatter_of_buffer buf in
-  Format.fprintf ppf "@[<hv2>@;<0 -2>%a@]" printer input;
-  Format.pp_print_flush ppf ();
-  Buffer.contents buf
-;;
+let pp_solution ?effannot = pp_list (pp_pair pp_tvar (pp_type ?effannot))
 
 let pp_lit ppf = function
   | LitUnit -> Format.fprintf ppf "()"
@@ -88,7 +98,7 @@ let pp_pattern ppf pat =
         patt_lst
     | PattVar _ as simple -> pp_simple_pattern ppf simple
   and pp_simple_pattern ppf = function
-    | PattVar v -> Format.fprintf ppf "%s" v
+    | PattVar v -> pp_var ppf v
     | non_simple -> Format.fprintf ppf "(%a)" pp_pattern non_simple
   in
   pp_pattern ppf pat
@@ -187,7 +197,7 @@ let pp_term ?(typeannot = true) ppf term =
   and pp_arg ppf t =
     match t with
     | Lit l -> pp_lit ppf l
-    | Variable (_, s) -> Format.fprintf ppf "%s" s
+    | Variable (_, s) -> pp_var ppf s
     | ListTrm (_, ls, _) ->
       let pp_sep ppf () = Format.fprintf ppf ";@ " in
       Format.fprintf ppf "[@[<hv>%a@]]" (Format.pp_print_list ~pp_sep pp_app) ls

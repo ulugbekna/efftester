@@ -5,6 +5,32 @@ open Effenv
 open Effunif
 open Effprint
 
+(* The error-reporting code uses either failwith(f) or
+   QCheck.Test.fail_report(f).
+
+   - [fail_report] should be used in test *conditions*, as the error
+   message is handled by QCheck and printed nicely; on the other hand,
+   the more standard [failwith] should be used in test *generators*,
+   where no such message support exists.
+
+   - [fail_report] should be used to report a test failure that will
+   be logged, lead to shrinking, etc. while [failwith] should be used
+   for fatal error that will interrupt the program; in particular,
+   they should only be used in the case of programming errors
+   (in a generator or in a test), rather than unexpected test inputs.
+*)
+let failwithf fmt =
+  let buf = Buffer.create 20 in
+  Format.kfprintf
+    (fun ppf ->
+      Format.pp_print_flush ppf ();
+      Format.pp_print_flush Format.err_formatter ();
+      prerr_endline (Buffer.contents buf);
+      failwith (Buffer.contents buf))
+    (Format.formatter_of_buffer buf)
+    ("@[" ^^ fmt ^^ "@]")
+;;
+
 module GenOpt : sig
   type 'a t = 'a option Gen.t
 
@@ -222,7 +248,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
           match lookup_var x env with
           | Some t -> arity t = arity_s && Effunif.types_compat t s
           | None ->
-            failwith ("var_rules: found variable " ^ x ^ " without associated type"))
+            failwithf "var_rules: found variable %a without associated type" pp_var x)
         candvars
     in
     List.map (fun var -> (1, Gen.return (Some (Variable (s, var))))) candvars'
@@ -278,14 +304,15 @@ module GeneratorsWithContext (Ctx : Context) = struct
           (*GenOpt.fail ()*)
           failwith "app_rules generated application with too big effect"
       | _ ->
-        failwith
-          ("app_rules generated application with non-function  "
-          ^ " t is "
-          ^ str_of_pp (pp_type ~effannot:true) t
-          ^ " f is "
-          ^ str_of_pp (pp_term ~typeannot:false) f
-          ^ " imm_type f is "
-          ^ str_of_pp (pp_type ~effannot:true) (imm_type f))
+        failwithf
+          ("app_rules generated application with non-function:@;"
+          ^^ "@[<v>t is %a,@ f is %a,@ imm_type f is %a@]")
+          (pp_type ~effannot:true)
+          t
+          (pp_term ~typeannot:false)
+          f
+          (pp_type ~effannot:true)
+          (imm_type f)
     in
     (* May generate eff in either operator or operand *)
     [ (4, type_gen (size / 2) >>= from_type eff no_eff);
@@ -318,18 +345,18 @@ module GeneratorsWithContext (Ctx : Context) = struct
       | s when types_compat s t -> []
       | Fun (s', _, t') -> s' :: get_arg_types t' t
       | s ->
-        failwith
-          ("get_arg_types: should not happen  s is "
-          ^ str_of_pp (pp_type ~effannot:true) s
-          ^ " t is "
-          ^ str_of_pp (pp_type ~effannot:true) t)
+        failwithf
+          ("get_arg_types: should not happen:@;" ^^ "@[<v>s is %a,@ t is %a@]")
+          (pp_type ~effannot:true)
+          s
+          (pp_type ~effannot:true)
+          t
     in
     (* returns the index of the first effect - or else the number of arguments *)
     let rec first_eff = function
       | s when types_compat s t || types_compat t s -> 0
       | Fun (_, e, t) -> if e = no_eff then 1 + first_eff t else 1
-      | s ->
-        failwith ("first_eff: should not happen  " ^ str_of_pp (pp_type ~effannot:true) s)
+      | s -> failwithf "first_eff: should not happen@ %a" (pp_type ~effannot:true) s
     in
     (* recursively build application term argument by argument *)
     let rec apply term r_type n effacc = function
@@ -362,13 +389,15 @@ module GeneratorsWithContext (Ctx : Context) = struct
       let f_term = Variable (s, f) in
       match mgu s t with
       | None ->
-        failwith
-          ("indir_rules, application: the return types of chosen variable "
-          ^ f
-          ^ ":"
-          ^ str_of_pp (pp_type ~effannot:true) s
-          ^ " do not match goal type "
-          ^ str_of_pp (pp_type ~effannot:true) t)
+        failwithf
+          "indir_rules, application:@ the return types of chosen variable@ @[%a : %a@]@ \
+           do not match goal type %a"
+          pp_var
+          f
+          (pp_type ~effannot:true)
+          s
+          (pp_type ~effannot:true)
+          t
       | Some sub ->
         (* goal type and candidate unify with some subst *)
         let goal_type = subst sub s in
@@ -386,18 +415,17 @@ module GeneratorsWithContext (Ctx : Context) = struct
         let arg_types =
           try get_arg_types goal_type (subst sub t)
           with Failure exc ->
-            print_endline ("s is " ^ str_of_pp (pp_type ~effannot:true) s);
-            print_endline
-              ("sub is "
-              ^ Print.list
-                  (Print.pair
-                     (fun id -> "'a" ^ string_of_int id)
-                     (str_of_pp (pp_type ~effannot:true)))
-                  sub);
-            print_endline
-              ("(subst sub s) is " ^ str_of_pp (pp_type ~effannot:true) (subst sub s));
-            print_endline ("t is " ^ str_of_pp (pp_type ~effannot:true) t);
-            failwith exc
+            failwithf
+              "%s@ [@<v>s is %a,@ sub is %a, (subst sub s) is %a, t is %a@]"
+              exc
+              (pp_type ~effannot:true)
+              s
+              (pp_solution ~effannot:true)
+              sub
+              (pp_type ~effannot:true)
+              (subst sub s)
+              (pp_type ~effannot:true)
+              t
         in
         let index_gen =
           let first_eff_index = first_eff goal_type in
@@ -474,11 +502,12 @@ module GeneratorsWithContext (Ctx : Context) = struct
       let then_type = imm_type m in
       match unify then_type t with
       | No_sol ->
-        failwith
-          ("if_rules: generated type "
-          ^ str_of_pp (pp_type ~effannot:true) then_type
-          ^ " in then branch does not unify with goal type "
-          ^ str_of_pp (pp_type ~effannot:true) t)
+        failwithf
+          "if_rules: generated type %a in then branch does not unify with goal type"
+          (pp_type ~effannot:true)
+          then_type
+          (pp_type ~effannot:true)
+          t
       | Sol sub ->
         let subst_t = subst sub t in
         (* else branch is generated *)
@@ -486,11 +515,13 @@ module GeneratorsWithContext (Ctx : Context) = struct
         let else_type = imm_type n in
         (match unify else_type subst_t with
         | No_sol ->
-          failwith
-            ("if_rules: generated else branch type "
-            ^ str_of_pp (pp_type ~effannot:true) else_type
-            ^ " does not unify with subst goal type "
-            ^ str_of_pp (pp_type ~effannot:true) subst_t)
+          failwithf
+            "if_rules: generated else branch type %a does not unify with subst goal \
+             type %a"
+            (pp_type ~effannot:true)
+            else_type
+            (pp_type ~effannot:true)
+            subst_t
         | Sol sub' ->
           let mytype = subst sub' subst_t in
           let myeff = eff_join (imm_eff b) (eff_join (imm_eff m) (imm_eff n)) in
