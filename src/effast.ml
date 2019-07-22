@@ -4,32 +4,18 @@ type variable = string
 type eff = bool * bool
 type typevar = int
 
-let resettypevar, newtypevar =
+let make_counter of_int =
   let count = ref 0 in
   ( (fun () -> count := 0),
     fun () ->
       let old = !count in
       incr count;
-      old )
+      of_int old )
 ;;
 
-let resetvar, newvar =
-  let count = ref 0 in
-  ( (fun () -> count := 0),
-    fun () ->
-      let old = !count in
-      incr count;
-      "var" ^ string_of_int old )
-;;
-
-let reseteffvar, neweffvar =
-  let count = ref 0 in
-  ( (fun () -> count := 0),
-    fun () ->
-      let old = !count in
-      incr count;
-      "eff" ^ string_of_int old )
-;;
+let resettypevar, newtypevar = make_counter (fun n -> n)
+let resetvar, newvar = make_counter (Printf.sprintf "var%d")
+let reseteffvar, neweffvar = make_counter (Printf.sprintf "eff%d")
 
 (** {!etype} is used to represent OCaml types that are present in our generator *)
 type etype =
