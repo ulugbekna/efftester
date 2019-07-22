@@ -18,22 +18,6 @@ let make_logger file_path =
 
 let no_logger = Printf.ifprintf stdout
 
-let rec bprint_list ~sep elt_printer buf lst =
-  match lst with
-  | [] -> ()
-  | [ elt ] -> elt_printer buf elt
-  | elt :: rest ->
-    Printf.bprintf
-      buf
-      "%a%a%a"
-      elt_printer
-      elt
-      sep
-      ()
-      (bprint_list ~sep elt_printer)
-      rest
-;;
-
 (* [shrink_list_elems shrink l yield] shrinks a list of elements [l] given a shrinker [shrink]
   TODO: use QCheck version of [shrink_list_elems] when @gasche's PR gets merged *)
 let shrink_list_elems shrink l yield =
@@ -167,46 +151,90 @@ let some typ payload eff = Constructor (typ, "Some", [ payload ], eff)
 let none typ = Constructor (typ, "None", [], (false, false))
 
 (** Printing functions  *)
+let pp_eff ppf (ef, ev) = Format.fprintf ppf "%B/%B" ef ev
 
-let rec type_to_ocaml ?(effannot = false) sb = function
-  | Typevar a -> Printf.bprintf sb "'a%d" a
-  | Unit -> Printf.bprintf sb "unit"
-  | Int -> Printf.bprintf sb "int"
-  | Float -> Printf.bprintf sb "float"
-  | Bool -> Printf.bprintf sb "bool"
-  | String -> Printf.bprintf sb "string"
-  | Option e -> Printf.bprintf sb "(%a) option" (type_to_ocaml ~effannot) e
-  | List s -> Printf.bprintf sb "(%a) list" (type_to_ocaml ~effannot) s
-  | Fun (s, e, t) ->
-    let print_simple_type sb s =
-      match s with
-      | Unit | Int | Float | Bool | String | Option _ | List _ | Typevar _ ->
-        Printf.bprintf sb "%a" (type_to_ocaml ~effannot) s
-      | Fun _ -> Printf.bprintf sb "(%a)" (type_to_ocaml ~effannot) s
-    in
-    let print_effannot sb = function
-      | None -> ()
-      | Some (ef, ev) -> Printf.bprintf sb "%B/%B" ef ev
-    in
-    let print_type sb t = Printf.bprintf sb "%a" (type_to_ocaml ~effannot) t in
-    Printf.bprintf
-      sb
-      "%a -%a> %a"
-      print_simple_type
-      s
-      print_effannot
-      (if effannot then Some e else None)
-      print_type
-      t
+let pp_option pp ppf = function
+  | None -> ()
+  | Some v -> pp ppf v
 ;;
 
-let type_to_str ?(effannot = false) typ =
-  let sb = Buffer.create 20 in
-  let () = type_to_ocaml ~effannot sb typ in
-  Buffer.contents sb
+let pp_type ?(effannot = false) ppf etype =
+  let rec pp_type ppf t =
+    let below = pp_param_type in
+    let rec self ppf = function
+      | Fun (s, e, t) ->
+        Format.fprintf
+          ppf
+          "%a@ -%a> %a"
+          below
+          s
+          (pp_option pp_eff)
+          (if effannot then Some e else None)
+          self
+          t
+      | other -> below ppf other
+    in
+    Format.fprintf ppf "@[<hv>%a@]" self t
+  and pp_param_type ppf t =
+    let below = pp_simple_type in
+    let rec self ppf = function
+      | Option e -> Format.fprintf ppf "%a@ option" self e
+      | List s -> Format.fprintf ppf "%a@ list" self s
+      | other -> below ppf other
+    in
+    Format.fprintf ppf "@[<hov2>%a@]" self t
+  and pp_simple_type ppf = function
+    | Typevar a -> Format.fprintf ppf "'a%d" a
+    | Unit -> Format.fprintf ppf "unit"
+    | Int -> Format.fprintf ppf "int"
+    | Float -> Format.fprintf ppf "float"
+    | Bool -> Format.fprintf ppf "bool"
+    | String -> Format.fprintf ppf "string"
+    | (Fun _ | Option _ | List _) as non_simple ->
+      Format.fprintf ppf "@[<2>(%a)@]" pp_type non_simple
+  in
+  pp_type ppf etype
 ;;
 
-let eff_to_str ((ef, ev) : eff) = Printf.sprintf "(%B,%B)" ef ev
+let str_of_pp printer input =
+  let buf = Buffer.create 20 in
+  let ppf = Format.formatter_of_buffer buf in
+  Format.fprintf ppf "@[<hv2>@;<0 -2>%a@]" printer input;
+  Format.pp_print_flush ppf ();
+  Buffer.contents buf
+;;
+
+let pp_lit ppf = function
+  | LitUnit -> Format.fprintf ppf "()"
+  | LitInt i ->
+    if i < 0 then Format.fprintf ppf "(%d)" i else Format.fprintf ppf "%d" i
+  | LitFloat f ->
+    if f <= 0. then Format.fprintf ppf "(%F)" f else Format.fprintf ppf "%F" f
+  (* We want parentheses when f equals (-0.);
+      Without parentheses -0. is interpreted as an arithmetic operation function. *)
+  | LitBool b -> Format.fprintf ppf "%B" b
+  | LitStr s -> Format.fprintf ppf "%S" s
+
+let pp_constructor_args ~one:pp_one ~several:pp_several ppf = function
+  | [] -> ()
+  | [ arg ] -> Format.fprintf ppf "@ %a" pp_one arg
+  | arg_list ->
+     let pp_sep ppf () = Format.fprintf ppf ",@ " in
+     Format.fprintf ppf "@ (@[<hov>%a@])"
+       (Format.pp_print_list ~pp_sep pp_several) arg_list
+
+let pp_pattern ppf pat =
+  let rec pp_pattern ppf = function
+    | PattConstr (_typ, name, patt_lst) ->
+       Format.fprintf ppf "%s%a" name
+         (pp_constructor_args ~one:pp_simple_pattern ~several:pp_pattern) patt_lst
+    | (PattVar _) as simple ->
+       pp_simple_pattern ppf simple
+    and pp_simple_pattern ppf = function
+      | PattVar v -> Format.fprintf ppf "%s" v
+      | non_simple -> Format.fprintf ppf "(%a)" pp_pattern non_simple
+  in pp_pattern ppf pat
+;;
 
 (* BNF grammar:
 
@@ -233,77 +261,80 @@ let eff_to_str ((ef, ev) : eff) = Printf.sprintf "(%B,%B)" ef ev
    The following prettyprinter is structured according to this grammar to cut down on
    the needless parentheses
 *)
-let rec term_to_ocaml ?(typeannot = true) term =
-  let lit_to_ocaml_sb sb = function
-    | LitUnit -> Printf.bprintf sb "()"
-    | LitInt i -> if i < 0 then Printf.bprintf sb "(%d)" i else Printf.bprintf sb "%d" i
-    | LitFloat f ->
-      if f <= 0. then Printf.bprintf sb "(%F)" f else Printf.bprintf sb "%F" f
-    (* We want parentheses when f equals (-0.);
-        Without parentheses -0. is interpreted as an arithmetic operation function. *)
-    | LitBool b -> Printf.bprintf sb "%B" b
-    | LitStr s -> Printf.bprintf sb "%S" s
-  in
-  let rec exp sb t =
-    let type_to_ocaml_noannot = type_to_ocaml ~effannot:false in
-    let print_binder sb (x, t) =
+let pp_term ?(typeannot = true) ppf term =
+  let rec pp_exp ppf t =
+    let pp_binder ppf (x, t) =
       if typeannot
-      then Printf.bprintf sb "(%s: %a)" x type_to_ocaml_noannot t
-      else Printf.bprintf sb "%s" x
+      then Format.fprintf ppf "(%s: %a)" x (pp_type ~effannot:false) t
+      else Format.fprintf ppf "%s" x
     in
     match t with
-    | Constructor (_, name, payload_lst, _) ->
-      (match payload_lst with
-      | [] -> Printf.bprintf sb "%s" name
-      | trms ->
-        let sep sb () = Printf.bprintf sb ", " in
-        Printf.bprintf sb "(%s (%a))" name (bprint_list ~sep exp) trms)
+    | Constructor (_, name, args, _) ->
+       Format.fprintf
+         ppf
+         "@[<2>%s%a@]"
+         name
+         (pp_constructor_args ~one:pp_arg ~several:pp_app) args
     | PatternMatch (_, match_trm, branches, _) ->
-      let case_to_str sb (pattern, body) =
-        Printf.bprintf sb "| %a -> %a" pattern_to_ocaml pattern exp body
+      let pp_case ppf (pattern, body) =
+        Format.fprintf ppf "@;| @[<2>%a@ ->@ %a@]" pp_pattern pattern pp_arg body
+        (* we use pp_arg to ensure that inner 'match' expressions get parenthesized,
+           to avoid incorrect-precedence cases such as
+             match x with
+             | None ->
+               match y with
+               | None -> ()
+               | Some _ -> ()
+             | Some _ -> (* captured by 'match y' above *)
+         *)
       in
-      Printf.bprintf
-        sb
-        "(match %a with %a)"
-        exp
+      Format.fprintf
+        ppf
+        "@[<hv>@[@[<2>match@ %a@]@ with@]%a@]"
+        pp_exp
         match_trm
-        (fun sb branches -> List.iter (case_to_str sb) branches)
+        (Format.pp_print_list pp_case)
         branches
-    | Lambda (_, x, t, m) -> Printf.bprintf sb "(fun %a -> %a)" print_binder (x, t) exp m
+    | Lambda (_, x, t, m) ->
+      Format.fprintf ppf "@[<2>fun %a ->@ %a@]" pp_binder (x, t) pp_exp m
     | Let (x, t, m, n, _, _) ->
-      Printf.bprintf sb "let %a = %a in %a" print_binder (x, t) exp m exp n
-    | If (_, b, m, n, _) -> Printf.bprintf sb "if %a then %a else %a" exp b exp m exp n
-    | Lit _ | Variable _ | ListTrm _ | App _ -> app sb t
-  and app sb t =
+      Format.fprintf
+        ppf
+        "@[<2>@[<hv2>let %a =@ %a@]@;<1 -2>in %a@]"
+        pp_binder
+        (x, t)
+        pp_exp
+        m
+        pp_exp
+        n
+    | If (_, b, m, n, _) ->
+      Format.fprintf
+        ppf
+        "@[<2>if %a@;<1 -2>then %a@;<1 -2>else %a@]"
+        pp_exp
+        b
+        pp_exp
+        m
+        pp_exp
+        n
+    | Lit _ | Variable _ | ListTrm _ | App _ -> pp_app ppf t
+  and pp_app ppf t =
+    let below = pp_arg in
+    let rec self ppf = function
+      | App (_, m, _, n, _) -> Format.fprintf ppf "%a@ %a" self m below n
+      | t -> below ppf t
+    in
+    Format.fprintf ppf "@[<2>%a@]" self t
+  and pp_arg ppf t =
     match t with
-    | App (_, m, _, n, _) -> Printf.bprintf sb "%a %a" app m arg n
-    | _ -> arg sb t
-  and arg sb t =
-    match t with
-    | Lit l -> lit_to_ocaml_sb sb l
-    | Variable (_, s) -> Printf.bprintf sb "%s" s
+    | Lit l -> pp_lit ppf l
+    | Variable (_, s) -> Format.fprintf ppf "%s" s
     | ListTrm (_, ls, _) ->
-      let print_lst sb ls = List.iter (fun elt -> Printf.bprintf sb "%a; " app elt) ls in
-      Printf.bprintf sb "[%a]" print_lst ls
-    | _ -> Printf.bprintf sb "(%a)" exp t
+        let pp_sep ppf () = Format.fprintf ppf ";@ " in
+        Format.fprintf ppf "[@[<hv>%a@]]" (Format.pp_print_list ~pp_sep pp_app) ls
+    | _ -> Format.fprintf ppf "(%a)" pp_exp t
   in
-  let sb = Buffer.create 80 in
-  let () = exp sb term in
-  Buffer.contents sb
-
-and pattern_to_ocaml sb patt =
-  let print_patt_list sb patt_lst =
-    match patt_lst with
-    | [] -> ()
-    | [ patt ] -> Printf.bprintf sb " %a" pattern_to_ocaml patt
-    | _patt_lst ->
-      let sep sb () = Printf.bprintf sb ", " in
-      Printf.bprintf sb " (%a)" (bprint_list ~sep pattern_to_ocaml) patt_lst
-  in
-  match patt with
-  | PattVar v -> Printf.bprintf sb "%s" v
-  | PattConstr (_typ, name, patt_lst) ->
-    Printf.bprintf sb "%s%a" name print_patt_list patt_lst
+  pp_exp ppf term
 ;;
 
 (** Effect system function *)
@@ -958,11 +989,11 @@ module GeneratorsWithContext (Ctx : Context) = struct
             failwith
               ("app_rules generated application with non-function  "
               ^ " t is "
-              ^ type_to_str ~effannot:true t
+              ^ str_of_pp (pp_type ~effannot:true) t
               ^ " f is "
-              ^ term_to_ocaml ~typeannot:false f
+              ^ str_of_pp (pp_term ~typeannot:false) f
               ^ " imm_type f is "
-              ^ type_to_str ~effannot:true (imm_type f)))
+              ^ str_of_pp (pp_type ~effannot:true) (imm_type f)))
     in
     (* May generate eff in either operator or operand *)
     [ (4, type_gen (size / 2) >>= from_type eff no_eff);
@@ -997,15 +1028,16 @@ module GeneratorsWithContext (Ctx : Context) = struct
       | s ->
         failwith
           ("get_arg_types: should not happen  s is "
-          ^ type_to_str ~effannot:true s
+          ^ str_of_pp (pp_type ~effannot:true) s
           ^ " t is "
-          ^ type_to_str ~effannot:true t)
+          ^ str_of_pp (pp_type ~effannot:true) t)
     in
     (* returns the index of the first effect - or else the number of arguments *)
     let rec first_eff = function
       | s when types_compat s t || types_compat t s -> 0
       | Fun (_, e, t) -> if e = no_eff then 1 + first_eff t else 1
-      | s -> failwith ("first_eff: should not happen  " ^ type_to_str ~effannot:true s)
+      | s ->
+        failwith ("first_eff: should not happen  " ^ str_of_pp (pp_type ~effannot:true) s)
     in
     (* recursively build application term argument by argument *)
     let rec apply term r_type n effacc = function
@@ -1048,9 +1080,9 @@ module GeneratorsWithContext (Ctx : Context) = struct
           ("indir_rules, application: the return types of chosen variable "
           ^ f
           ^ ":"
-          ^ type_to_str ~effannot:true s
+          ^ str_of_pp (pp_type ~effannot:true) s
           ^ " do not match goal type "
-          ^ type_to_str ~effannot:true t)
+          ^ str_of_pp (pp_type ~effannot:true) t)
       | Some sub ->
         (* goal type and candidate unify with some subst *)
         let goal_type = subst sub s in
@@ -1067,17 +1099,17 @@ module GeneratorsWithContext (Ctx : Context) = struct
             let arg_types =
               try get_arg_types goal_type (subst sub t)
               with Failure exc ->
-                print_endline ("s is " ^ type_to_str ~effannot:true s);
+                print_endline ("s is " ^ str_of_pp (pp_type ~effannot:true) s);
                 print_endline
                   ("sub is "
                   ^ Print.list
                       (Print.pair
                          (fun id -> "'a" ^ string_of_int id)
-                         (type_to_str ~effannot:true))
+                         (str_of_pp (pp_type ~effannot:true)))
                       sub);
                 print_endline
-                  ("(subst sub s) is " ^ type_to_str ~effannot:true (subst sub s));
-                print_endline ("t is " ^ type_to_str ~effannot:true t);
+                  ("(subst sub s) is " ^ str_of_pp (pp_type ~effannot:true) (subst sub s));
+                print_endline ("t is " ^ str_of_pp (pp_type ~effannot:true) t);
                 failwith exc
             in
             let first_eff_index = first_eff goal_type in
@@ -1164,9 +1196,9 @@ module GeneratorsWithContext (Ctx : Context) = struct
           | No_sol ->
             failwith
               ("if_rules: generated type "
-              ^ type_to_str ~effannot:true then_type
+              ^ str_of_pp (pp_type ~effannot:true) then_type
               ^ " in then branch does not unify with goal type "
-              ^ type_to_str ~effannot:true t)
+              ^ str_of_pp (pp_type ~effannot:true) t)
           | Sol sub ->
             let subst_t = subst sub t in
             (* else branch is generated *)
@@ -1178,9 +1210,9 @@ module GeneratorsWithContext (Ctx : Context) = struct
               | No_sol ->
                 failwith
                   ("if_rules: generated else branch type "
-                  ^ type_to_str ~effannot:true else_type
+                  ^ str_of_pp (pp_type ~effannot:true) else_type
                   ^ " does not unify with subst goal type "
-                  ^ type_to_str ~effannot:true subst_t)
+                  ^ str_of_pp (pp_type ~effannot:true) subst_t)
               | Sol sub' ->
                 let mytype = subst sub' subst_t in
                 let myeff = eff_join (imm_eff b) (eff_join (imm_eff m) (imm_eff n)) in
@@ -1647,23 +1679,23 @@ let rec tcheck env term =
                   failwith
                     ("tcheck: effect annotation disagree in application"
                     ^ "  ceff is "
-                    ^ eff_to_str ceff
+                    ^ str_of_pp pp_eff ceff
                     ^ "  j_eff is "
-                    ^ eff_to_str j_eff))
+                    ^ str_of_pp pp_eff j_eff))
               else
                 failwith
                   ("tcheck: argument types disagree in application"
                   ^ "  ntyp is "
-                  ^ type_to_str ~effannot:true ntyp
+                  ^ str_of_pp (pp_type ~effannot:true) ntyp
                   ^ "  at is "
-                  ^ type_to_str ~effannot:true at)
+                  ^ str_of_pp (pp_type ~effannot:true) at)
             | No_sol ->
               failwith
                 ("tcheck: argument types do not unify in application"
                 ^ "  ntyp is "
-                ^ type_to_str ~effannot:true ntyp
+                ^ str_of_pp (pp_type ~effannot:true) ntyp
                 ^ "  at is "
-                ^ type_to_str ~effannot:true at))
+                ^ str_of_pp (pp_type ~effannot:true) at))
           else
             failwith
               ("tcheck: function types disagree in application"
@@ -1671,19 +1703,19 @@ let rec tcheck env term =
                 ^ Print.list
                     (Print.pair
                        (fun id -> "'a" ^ string_of_int id)
-                       (type_to_str ~effannot:true))
+                       (str_of_pp (pp_type ~effannot:true)))
                     sub)
               ^ "  mtyp is "
-              ^ type_to_str ~effannot:true mtyp
+              ^ str_of_pp (pp_type ~effannot:true) mtyp
               ^ "  (Fun (at,ceff,rt)) is "
-              ^ type_to_str ~effannot:true (Fun (at, ceff, rt)))
+              ^ str_of_pp (pp_type ~effannot:true) (Fun (at, ceff, rt)))
         | No_sol ->
           failwith
             ("tcheck: function types do not unify in application"
             ^ "  mtyp is "
-            ^ type_to_str ~effannot:true mtyp
+            ^ str_of_pp (pp_type ~effannot:true) mtyp
             ^ "  (Fun (at,ceff,rt)) is "
-            ^ type_to_str ~effannot:true (Fun (at, ceff, rt))))
+            ^ str_of_pp (pp_type ~effannot:true) (Fun (at, ceff, rt))))
       else failwith "tcheck: application has subexprs with eff"
     | _ -> failwith "tcheck: application of non-function type")
   | Let (x, t, m, n, ltyp, leff) ->
@@ -1701,16 +1733,16 @@ let rec tcheck env term =
           failwith
             ("tcheck: let-effect disagrees with annotation"
             ^ "  leff is "
-            ^ eff_to_str leff
+            ^ str_of_pp pp_eff leff
             ^ "  j_eff is "
-            ^ eff_to_str j_eff))
+            ^ str_of_pp pp_eff j_eff))
       else
         failwith
           ("tcheck: let-body's type disagrees with annotation: "
           ^ "ntyp is "
-          ^ type_to_str ~effannot:true ntyp
+          ^ str_of_pp (pp_type ~effannot:true) ntyp
           ^ "  ltyp is "
-          ^ type_to_str ~effannot:true ltyp)
+          ^ str_of_pp (pp_type ~effannot:true) ltyp)
     else failwith "tcheck: let-bound type disagrees with annotation"
   | Lambda (t, x, s, m) ->
     let mtyp, meff = tcheck (VarMap.add x s env) m in
@@ -1721,9 +1753,9 @@ let rec tcheck env term =
       failwith
         ("tcheck: Lambda's type disagrees with annotation: "
         ^ "ftyp is "
-        ^ type_to_str ~effannot:true ftyp
+        ^ str_of_pp (pp_type ~effannot:true) ftyp
         ^ "  t is "
-        ^ type_to_str ~effannot:true t)
+        ^ str_of_pp (pp_type ~effannot:true) t)
   | If (t, b, m, n, e) ->
     let btyp, beff = tcheck env b in
     if btyp = Bool
@@ -1749,33 +1781,33 @@ let rec tcheck env term =
               failwith
                 ("tcheck: If's else branch type disagrees with annotation: "
                 ^ "  term is "
-                ^ term_to_ocaml ~typeannot:false term
+                ^ str_of_pp (pp_term ~typeannot:false) term
                 ^ "  ntyp is "
-                ^ type_to_str ~effannot:true ntyp
+                ^ str_of_pp (pp_type ~effannot:true) ntyp
                 ^ "  (subst sub ntyp) is "
-                ^ type_to_str ~effannot:true (subst sub ntyp)
+                ^ str_of_pp (pp_type ~effannot:true) (subst sub ntyp)
                 ^ "  t is "
-                ^ type_to_str ~effannot:true t)
+                ^ str_of_pp (pp_type ~effannot:true) t)
           else
             failwith
               ("tcheck: If's then branch type disagrees with annotation: "
               ^ "  term is "
-              ^ term_to_ocaml ~typeannot:false term
+              ^ str_of_pp (pp_term ~typeannot:false) term
               ^ "  mtyp is "
-              ^ type_to_str ~effannot:true mtyp
+              ^ str_of_pp (pp_type ~effannot:true) mtyp
               ^ "  (subst sub mtyp) is "
-              ^ type_to_str ~effannot:true (subst sub mtyp)
+              ^ str_of_pp (pp_type ~effannot:true) (subst sub mtyp)
               ^ "  t is "
-              ^ type_to_str ~effannot:true t)
+              ^ str_of_pp (pp_type ~effannot:true) t)
         | No_sol ->
           failwith
             ("tcheck: If's branch types do not unify:  "
             ^ "  term is "
-            ^ term_to_ocaml ~typeannot:false term
+            ^ str_of_pp (pp_term ~typeannot:false) term
             ^ "  mtyp is "
-            ^ type_to_str ~effannot:true mtyp
+            ^ str_of_pp (pp_type ~effannot:true) mtyp
             ^ "  ntyp is "
-            ^ type_to_str ~effannot:true ntyp))
+            ^ str_of_pp (pp_type ~effannot:true) ntyp))
       else failwith "tcheck: If's condition effect disagrees with annotation"
     else failwith "tcheck: If with non-Boolean condition"
 ;;
@@ -1826,7 +1858,7 @@ module Arbitrary = struct
   *)
   let term_gen_by_type typ =
     make
-      ~print:(Print.option (term_to_ocaml ~typeannot:false))
+      ~print:(Print.option (str_of_pp (pp_term ~typeannot:false)))
       ~shrink:Shrinker.shrinker
       (fun rs ->
         let module Gener = GeneratorsWithContext (FreshContext ()) in
@@ -1837,7 +1869,7 @@ module Arbitrary = struct
 
   let arb_type =
     make
-      ~print:type_to_str
+      ~print:(str_of_pp pp_type)
       Gen.(
         frequency
           [ (1, map (fun i -> Typevar i) (oneofl [ 1; 2; 3; 4; 5 ]));
@@ -1850,7 +1882,7 @@ module Arbitrary = struct
   let arb_dep_term_with_cache =
     make
       ~print:
-        (let printer (_typ, trm) = term_to_ocaml ~typeannot:false trm in
+        (let printer (_typ, trm) = str_of_pp (pp_term ~typeannot:false) trm in
          Print.option printer)
       ~shrink:Shrinker.wrapped_dep_term_shrinker
       (fun rs ->
@@ -1908,7 +1940,7 @@ let can_compile_test ~with_logging =
         false
       | Some (_typ, trm) ->
         (try
-           let generated_prgm = term_to_ocaml trm in
+           let generated_prgm = str_of_pp pp_term trm in
            logger "%s" generated_prgm;
            write_prog generated_prgm prgm_filename;
            0 = Sys.command ("ocamlc -w -5@20-26 " ^ prgm_filename)
@@ -1943,7 +1975,7 @@ let int_eq_test =
       ==>
       match topt with
       | None -> false
-      | Some t -> is_native_byte_equiv (term_to_ocaml (print_wrap t)))
+      | Some t -> is_native_byte_equiv (str_of_pp pp_term (print_wrap t)))
 ;;
 
 let rand_eq_test typ =
@@ -1957,7 +1989,7 @@ let rand_eq_test typ =
       ==>
       match topt with
       | None -> false
-      | Some t -> is_native_byte_equiv (term_to_ocaml (rand_print_wrap typ t)))
+      | Some t -> is_native_byte_equiv (str_of_pp pp_term (rand_print_wrap typ t)))
 ;;
 
 let dep_eq_test ~with_logging =
@@ -1978,7 +2010,7 @@ let dep_eq_test ~with_logging =
         logger "%s" "failwith(\"dep_t_opt = None\")";
         false
       | Some (typ, trm) ->
-        let generated_prgm = rand_print_wrap typ trm |> term_to_ocaml in
+        let generated_prgm = rand_print_wrap typ trm |> str_of_pp pp_term in
         logger "%s" generated_prgm;
         is_native_byte_equiv generated_prgm)
 ;;
