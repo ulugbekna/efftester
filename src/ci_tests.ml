@@ -1,3 +1,4 @@
+open Effast
 open Efftester
 
 let () =
