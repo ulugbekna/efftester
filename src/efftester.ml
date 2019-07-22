@@ -206,34 +206,42 @@ let str_of_pp printer input =
 
 let pp_lit ppf = function
   | LitUnit -> Format.fprintf ppf "()"
-  | LitInt i ->
-    if i < 0 then Format.fprintf ppf "(%d)" i else Format.fprintf ppf "%d" i
+  | LitInt i -> if i < 0 then Format.fprintf ppf "(%d)" i else Format.fprintf ppf "%d" i
   | LitFloat f ->
     if f <= 0. then Format.fprintf ppf "(%F)" f else Format.fprintf ppf "%F" f
   (* We want parentheses when f equals (-0.);
       Without parentheses -0. is interpreted as an arithmetic operation function. *)
   | LitBool b -> Format.fprintf ppf "%B" b
   | LitStr s -> Format.fprintf ppf "%S" s
+;;
 
 let pp_constructor_args ~one:pp_one ~several:pp_several ppf = function
   | [] -> ()
   | [ arg ] -> Format.fprintf ppf "@ %a" pp_one arg
   | arg_list ->
-     let pp_sep ppf () = Format.fprintf ppf ",@ " in
-     Format.fprintf ppf "@ (@[<hov>%a@])"
-       (Format.pp_print_list ~pp_sep pp_several) arg_list
+    let pp_sep ppf () = Format.fprintf ppf ",@ " in
+    Format.fprintf
+      ppf
+      "@ (@[<hov>%a@])"
+      (Format.pp_print_list ~pp_sep pp_several)
+      arg_list
+;;
 
 let pp_pattern ppf pat =
   let rec pp_pattern ppf = function
     | PattConstr (_typ, name, patt_lst) ->
-       Format.fprintf ppf "%s%a" name
-         (pp_constructor_args ~one:pp_simple_pattern ~several:pp_pattern) patt_lst
-    | (PattVar _) as simple ->
-       pp_simple_pattern ppf simple
-    and pp_simple_pattern ppf = function
-      | PattVar v -> Format.fprintf ppf "%s" v
-      | non_simple -> Format.fprintf ppf "(%a)" pp_pattern non_simple
-  in pp_pattern ppf pat
+      Format.fprintf
+        ppf
+        "%s%a"
+        name
+        (pp_constructor_args ~one:pp_simple_pattern ~several:pp_pattern)
+        patt_lst
+    | PattVar _ as simple -> pp_simple_pattern ppf simple
+  and pp_simple_pattern ppf = function
+    | PattVar v -> Format.fprintf ppf "%s" v
+    | non_simple -> Format.fprintf ppf "(%a)" pp_pattern non_simple
+  in
+  pp_pattern ppf pat
 ;;
 
 (* BNF grammar:
@@ -270,11 +278,12 @@ let pp_term ?(typeannot = true) ppf term =
     in
     match t with
     | Constructor (_, name, args, _) ->
-       Format.fprintf
-         ppf
-         "@[<2>%s%a@]"
-         name
-         (pp_constructor_args ~one:pp_arg ~several:pp_app) args
+      Format.fprintf
+        ppf
+        "@[<2>%s%a@]"
+        name
+        (pp_constructor_args ~one:pp_arg ~several:pp_app)
+        args
     | PatternMatch (_, match_trm, branches, _) ->
       let pp_case ppf (pattern, body) =
         Format.fprintf ppf "@;| @[<2>%a@ ->@ %a@]" pp_pattern pattern pp_arg body
@@ -330,8 +339,8 @@ let pp_term ?(typeannot = true) ppf term =
     | Lit l -> pp_lit ppf l
     | Variable (_, s) -> Format.fprintf ppf "%s" s
     | ListTrm (_, ls, _) ->
-        let pp_sep ppf () = Format.fprintf ppf ";@ " in
-        Format.fprintf ppf "[@[<hv>%a@]]" (Format.pp_print_list ~pp_sep pp_app) ls
+      let pp_sep ppf () = Format.fprintf ppf ";@ " in
+      Format.fprintf ppf "[@[<hv>%a@]]" (Format.pp_print_list ~pp_sep pp_app) ls
     | _ -> Format.fprintf ppf "(%a)" pp_exp t
   in
   pp_exp ppf term
