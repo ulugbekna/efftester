@@ -567,7 +567,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
     in
     [ (3, gen) ]
 
-  and list_intro_rules env goal_typ eff size : (int * term option Gen.t) list =
+  and list_intro_rules env goal_typ eff size =
     let open Syntax in
     match goal_typ with
     | List elt_typ ->
