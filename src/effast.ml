@@ -155,3 +155,26 @@ let rec normalize_eff t =
 
 let some typ payload eff = Constructor (typ, "Some", [ payload ], eff)
 let none typ = Constructor (typ, "None", [], (false, false))
+
+module Ref = struct
+  let ref_t =
+    let new_tv = newtypevar () in
+    Fun (Typevar new_tv, (true, false), Ref (Typevar new_tv))
+  ;;
+
+  let ref_f = Variable (ref_t, "ref")
+
+  let deref_t =
+    let new_tv = newtypevar () in
+    Fun (Ref (Typevar new_tv), (false, false), Typevar new_tv)
+  ;;
+
+  let deref_f = Variable (deref_t, "(!)")
+
+  let update_t =
+    let new_tv = newtypevar () in
+    Fun (Ref (Typevar new_tv), (false, false), Fun (Typevar new_tv, (true, false), Unit))
+  ;;
+
+  let update_f = Variable (update_t, "(:=)")
+end
