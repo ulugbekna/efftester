@@ -78,6 +78,7 @@ let eff_leq eff eff_exp =
   | _, _ -> false
 ;;
 
+(** checks if given type variable (represented as int) occurs in given type expression *)
 let rec occurs tvar = function
   | Typevar a -> tvar = a
   | Option a -> occurs tvar a
@@ -92,13 +93,15 @@ let rec arity = function
   | _ -> 0
 ;;
 
-let rec subst repl t =
+(** [subst repl t] substitutes all type variables in [t] with mapping from type variables
+    to types given in [repl] *)
+let rec subst replacements t =
   match t with
   | Unit | Int | Float | Bool | String -> t
-  | Typevar a -> (try List.assoc a repl with Not_found -> t)
-  | Option e -> Option (subst repl e)
-  | List u -> List (subst repl u)
-  | Fun (l, e, r) -> Fun (subst repl l, e, subst repl r)
+  | Typevar i -> (try List.assoc i replacements with Not_found -> t)
+  | Option t' -> Option (subst replacements t')
+  | List t' -> List (subst replacements t')
+  | Fun (l, e, r) -> Fun (subst replacements l, e, subst replacements r)
 ;;
 
 let imm_type t =

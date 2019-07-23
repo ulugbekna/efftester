@@ -194,16 +194,18 @@ module GeneratorsWithContext (Ctx : Context) = struct
 
   (* Type-directed literal generator *)
   let literal_gen t _eff _size =
+    let fail s = Printf.sprintf "literal_gen: %s arg. should not happen" s |> failwith in
     match t with
     | Unit -> Gen.return LitUnit
     | Int -> Gen.map (fun i -> LitInt i) int_gen
     | Float -> Gen.map (fun f -> LitFloat f) float_gen
     | Bool -> Gen.map (fun b -> LitBool b) Gen.bool
     | String -> Gen.map (fun s -> LitStr s) string_gen
-    | Option _ -> failwith "literal_gen: option arg. should not happen"
-    | List _ -> failwith "literal_gen: list arg. should not happen"
-    | Typevar _ -> failwith "literal_gen: typevar arg. should not happen"
-    | Fun _ -> failwith "literal_gen: funtype arg. should not happen"
+    | Option _ -> fail "option"
+    | Ref _ -> fail "ref"
+    | List _ -> fail "list"
+    | Typevar _ -> fail "typevar"
+    | Fun _ -> fail "funtype"
   ;;
 
   (* Sized generator of variables according to the LIT rule
