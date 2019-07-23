@@ -26,6 +26,7 @@ type etype =
   | Bool
   | String
   | Option of etype
+  | Ref of etype
   | List of etype
   | Fun of etype * eff * etype
 
@@ -34,6 +35,7 @@ let rec ftv = function
   | Typevar a -> [ a ]
   | Unit | Int | Float | Bool | String -> []
   | Option e -> ftv e
+  | Ref t -> ftv t
   | List et -> ftv et
   | Fun (a, _, r) -> ftv a @ ftv r
 ;;
@@ -82,6 +84,7 @@ let eff_leq eff eff_exp =
 let rec occurs tvar = function
   | Typevar a -> tvar = a
   | Option a -> occurs tvar a
+  | Ref a -> occurs tvar a
   | List a -> occurs tvar a
   | Fun (a, _, b) -> occurs tvar a || occurs tvar b
   | Unit | Int | Float | Bool | String -> false
@@ -100,6 +103,7 @@ let rec subst replacements t =
   | Unit | Int | Float | Bool | String -> t
   | Typevar i -> (try List.assoc i replacements with Not_found -> t)
   | Option t' -> Option (subst replacements t')
+  | Ref t' -> Ref (subst replacements t')
   | List t' -> List (subst replacements t')
   | Fun (l, e, r) -> Fun (subst replacements l, e, subst replacements r)
 ;;
@@ -142,6 +146,9 @@ let rec normalize_eff t =
   | Option t' ->
     let t'' = normalize_eff t' in
     Option t''
+  | Ref t' ->
+    let t'' = normalize_eff t' in
+    Ref t''
   | List t' ->
     let t'' = normalize_eff t' in
     List t''

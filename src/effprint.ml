@@ -45,6 +45,7 @@ let pp_type ?(effannot = false) ppf etype =
     let below = pp_simple_type in
     let rec self ppf = function
       | Option e -> Format.fprintf ppf "%a@ option" self e
+      | Ref e -> Format.fprintf ppf "%a@ ref" self e
       | List s -> Format.fprintf ppf "%a@ list" self s
       | other -> below ppf other
     in
@@ -56,7 +57,7 @@ let pp_type ?(effannot = false) ppf etype =
     | Float -> Format.fprintf ppf "float"
     | Bool -> Format.fprintf ppf "bool"
     | String -> Format.fprintf ppf "string"
-    | (Fun _ | Option _ | List _) as non_simple ->
+    | (Fun _ | Option _ | Ref _ | List _) as non_simple ->
       Format.fprintf ppf "@[<2>(%a)@]" pp_type non_simple
   in
   pp_type ppf etype
