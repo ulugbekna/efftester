@@ -66,8 +66,6 @@ and pattern =
   | PattVar of variable
   | PattConstr of etype * string * pattern list
 
-let some typ payload eff = Constructor (typ, "Some", [ payload ], eff)
-let none typ = Constructor (typ, "None", [], (false, false))
 let no_eff = (false, false)
 let eff_join (ef, ev) (ef', ev') = (ef || ef', ev || ev')
 
@@ -154,3 +152,6 @@ let rec normalize_eff t =
     List t''
   | Fun (s, _, t) -> Fun (normalize_eff s, no_eff, normalize_eff t)
 ;;
+
+let some typ payload eff = Constructor (typ, "Some", [ payload ], eff)
+let none typ = Constructor (typ, "None", [], (false, false))
