@@ -1,4 +1,5 @@
 module Print = QCheck.Print
+module Test = QCheck.Test
 open Effast
 open Effenv
 open Effunif
@@ -69,26 +70,28 @@ let rec tcheck env term =
        let et = VarMap.find v env in
        if types_compat et t (* annotation may be more concrete then inferred type *)
        then (et, no_eff)
-       else failwith "tcheck: variable types disagree"
-     with Not_found -> failwith "tcheck: unknown variable")
+       else Test.fail_report "tcheck: variable types disagree"
+     with Not_found -> Test.fail_report "tcheck: unknown variable")
   | ListTrm (typ, lst, eff) ->
     (match typ with
     | List elem_typ ->
       List.iter
         (fun e ->
           if not (types_compat (imm_type e) elem_typ)
-          then failwith "tcheck: a list type mismatches its element's type")
+          then Test.fail_report "tcheck: a list type mismatches its element's type")
         lst;
       (typ, eff)
-    | _ -> failwith "tcheck: ListTrm must have a list type")
+    | _ -> Test.fail_report "tcheck: ListTrm must have a list type")
   | Constructor (typ, name, payload_lst, eff) ->
     (match check_opt_invariants (typ, name, payload_lst) with
     | Ok _ ->
-      (try
-         List.iter (fun trm -> tcheck env trm |> ignore) payload_lst;
-         (typ, eff)
-       with Failure msg -> failwith msg)
-    | Error msg -> failwith msg)
+      List.iter
+        (fun trm ->
+          (* ignore value but propatage error *)
+          tcheck env trm |> ignore)
+        payload_lst;
+      (typ, eff)
+    | Error msg -> Test.fail_report msg)
   | PatternMatch (typ, matched_trm, cases, eff) ->
     let has_pat_type_mismatch pat =
       match pat with
@@ -103,7 +106,7 @@ let rec tcheck env term =
         cases
     in
     if has_type_mismatch_lst
-    then failwith "tcheck: PatternMatch has a type mismatch"
+    then Test.fail_report "tcheck: PatternMatch has a type mismatch"
     else (typ, eff)
   | App (rt, m, at, n, ceff) ->
     let mtyp, meff = tcheck env m in
@@ -126,48 +129,49 @@ let rec tcheck env term =
                 if eff_leq j_eff ceff
                 then (rt, j_eff)
                 else
-                  failwith
-                    ("tcheck: effect annotation disagree in application"
-                    ^ "  ceff is "
-                    ^ str_of_pp pp_eff ceff
-                    ^ "  j_eff is "
-                    ^ str_of_pp pp_eff j_eff))
+                  Test.fail_reportf
+                    ("tcheck: effect annotation disagree in application:@;"
+                    ^^ "@[<v>ceff is %a,@ j_eff is %a@]")
+                    pp_eff
+                    ceff
+                    pp_eff
+                    j_eff)
               else
-                failwith
-                  ("tcheck: argument types disagree in application"
-                  ^ "  ntyp is "
-                  ^ str_of_pp (pp_type ~effannot:true) ntyp
-                  ^ "  at is "
-                  ^ str_of_pp (pp_type ~effannot:true) at)
+                Test.fail_reportf
+                  ("tcheck: argument types disagree in application:@;"
+                  ^^ "@[<v>ntyp is %a,@ at is %a@]")
+                  (pp_type ~effannot:true)
+                  ntyp
+                  (pp_type ~effannot:true)
+                  at
             | No_sol ->
-              failwith
-                ("tcheck: argument types do not unify in application"
-                ^ "  ntyp is "
-                ^ str_of_pp (pp_type ~effannot:true) ntyp
-                ^ "  at is "
-                ^ str_of_pp (pp_type ~effannot:true) at))
+              Test.fail_reportf
+                ("tcheck: argument types do not unify in application:@;"
+                ^^ "@[<v>ntyp is %a,@ at is %a@]")
+                (pp_type ~effannot:true)
+                ntyp
+                (pp_type ~effannot:true)
+                at)
           else
-            failwith
-              ("tcheck: function types disagree in application"
-              ^ ("  sub is "
-                ^ Print.list
-                    (Print.pair
-                       (fun id -> "'a" ^ string_of_int id)
-                       (str_of_pp (pp_type ~effannot:true)))
-                    sub)
-              ^ "  mtyp is "
-              ^ str_of_pp (pp_type ~effannot:true) mtyp
-              ^ "  (Fun (at,ceff,rt)) is "
-              ^ str_of_pp (pp_type ~effannot:true) (Fun (at, ceff, rt)))
+            Test.fail_reportf
+              ("tcheck: function types disagree in application:@;"
+              ^^ "@[<v>sub is %a,@ mtyp is %a,@ (Fun (at,ceff,rt)) is %a@]")
+              (pp_solution ~effannot:true)
+              sub
+              (pp_type ~effannot:true)
+              mtyp
+              (pp_type ~effannot:true)
+              (Fun (at, ceff, rt))
         | No_sol ->
-          failwith
-            ("tcheck: function types do not unify in application"
-            ^ "  mtyp is "
-            ^ str_of_pp (pp_type ~effannot:true) mtyp
-            ^ "  (Fun (at,ceff,rt)) is "
-            ^ str_of_pp (pp_type ~effannot:true) (Fun (at, ceff, rt))))
-      else failwith "tcheck: application has subexprs with eff"
-    | _ -> failwith "tcheck: application of non-function type")
+          Test.fail_reportf
+            ("tcheck: function types do not unify in application:@;"
+            ^^ "@[<v>mtyp is %a,@ (Fun (at,ceff,rt)) is %a@]")
+            (pp_type ~effannot:true)
+            mtyp
+            (pp_type ~effannot:true)
+            (Fun (at, ceff, rt)))
+      else Test.fail_report "tcheck: application has subexprs with eff"
+    | _ -> Test.fail_report "tcheck: application of non-function type")
   | Let (x, t, m, n, ltyp, leff) ->
     let mtyp, meff = tcheck env m in
     let ntyp, neff = tcheck (VarMap.add x mtyp env) n in
@@ -180,32 +184,35 @@ let rec tcheck env term =
         if eff_leq j_eff leff
         then (ntyp, leff)
         else
-          failwith
-            ("tcheck: let-effect disagrees with annotation"
-            ^ "  leff is "
-            ^ str_of_pp pp_eff leff
-            ^ "  j_eff is "
-            ^ str_of_pp pp_eff j_eff))
+          Test.fail_reportf
+            ("tcheck: let-effect disagrees with annotation:@;"
+            ^^ "@[<v>leff is %a,@ j_eff is %a@]")
+            pp_eff
+            leff
+            pp_eff
+            j_eff)
       else
-        failwith
-          ("tcheck: let-body's type disagrees with annotation: "
-          ^ "ntyp is "
-          ^ str_of_pp (pp_type ~effannot:true) ntyp
-          ^ "  ltyp is "
-          ^ str_of_pp (pp_type ~effannot:true) ltyp)
-    else failwith "tcheck: let-bound type disagrees with annotation"
+        Test.fail_reportf
+          ("tcheck: let-body's type disagrees with annotation:@;"
+          ^^ "@[<v>ntyp is %a, ltyp is %a@]")
+          (pp_type ~effannot:true)
+          ntyp
+          (pp_type ~effannot:true)
+          ltyp
+    else Test.fail_report "tcheck: let-bound type disagrees with annotation"
   | Lambda (t, x, s, m) ->
     let mtyp, meff = tcheck (VarMap.add x s env) m in
     let ftyp = Fun (s, meff, mtyp) in
     if types_compat ftyp t
     then (ftyp, no_eff)
     else
-      failwith
-        ("tcheck: Lambda's type disagrees with annotation: "
-        ^ "ftyp is "
-        ^ str_of_pp (pp_type ~effannot:true) ftyp
-        ^ "  t is "
-        ^ str_of_pp (pp_type ~effannot:true) t)
+      Test.fail_reportf
+        ("tcheck: Lambda's type disagrees with annotation:@;"
+        ^^ "@[<v>ftyp is %a,@ t is %a@]")
+        (pp_type ~effannot:true)
+        ftyp
+        (pp_type ~effannot:true)
+        t
   | If (t, b, m, n, e) ->
     let btyp, beff = tcheck env b in
     if btyp = Bool
@@ -226,38 +233,42 @@ let rec tcheck env term =
               then (
                 let e' = eff_join beff (eff_join meff neff) in
                 (t, e'))
-              else failwith "tcheck: If's branch effects disagree with annotation"
+              else
+                Test.fail_report "tcheck: If's branch effects disagree with annotation"
             else
-              failwith
-                ("tcheck: If's else branch type disagrees with annotation: "
-                ^ "  term is "
-                ^ str_of_pp (pp_term ~typeannot:false) term
-                ^ "  ntyp is "
-                ^ str_of_pp (pp_type ~effannot:true) ntyp
-                ^ "  (subst sub ntyp) is "
-                ^ str_of_pp (pp_type ~effannot:true) (subst sub ntyp)
-                ^ "  t is "
-                ^ str_of_pp (pp_type ~effannot:true) t)
+              Test.fail_reportf
+                ("tcheck: If's else branch type disagrees with annotation;@;"
+                ^^ "@[<v>term is %a,@ ntyp is %a,@ (subst sub ntyp) is %a,@ t is %a@]")
+                (pp_term ~typeannot:false)
+                term
+                (pp_type ~effannot:true)
+                ntyp
+                (pp_type ~effannot:true)
+                (subst sub ntyp)
+                (pp_type ~effannot:true)
+                t
           else
-            failwith
-              ("tcheck: If's then branch type disagrees with annotation: "
-              ^ "  term is "
-              ^ str_of_pp (pp_term ~typeannot:false) term
-              ^ "  mtyp is "
-              ^ str_of_pp (pp_type ~effannot:true) mtyp
-              ^ "  (subst sub mtyp) is "
-              ^ str_of_pp (pp_type ~effannot:true) (subst sub mtyp)
-              ^ "  t is "
-              ^ str_of_pp (pp_type ~effannot:true) t)
+            Test.fail_reportf
+              ("tcheck: If's then branch type disagrees with annotation:@;"
+              ^^ "@[<v>term is %a,@ mtyp is %a,@ (subst sub mtyp) is %a,@ t is %a@]")
+              (pp_term ~typeannot:false)
+              term
+              (pp_type ~effannot:true)
+              mtyp
+              (pp_type ~effannot:true)
+              (subst sub mtyp)
+              (pp_type ~effannot:true)
+              t
         | No_sol ->
-          failwith
-            ("tcheck: If's branch types do not unify:  "
-            ^ "  term is "
-            ^ str_of_pp (pp_term ~typeannot:false) term
-            ^ "  mtyp is "
-            ^ str_of_pp (pp_type ~effannot:true) mtyp
-            ^ "  ntyp is "
-            ^ str_of_pp (pp_type ~effannot:true) ntyp))
-      else failwith "tcheck: If's condition effect disagrees with annotation"
-    else failwith "tcheck: If with non-Boolean condition"
+          Test.fail_reportf
+            ("tcheck: If's branch types do not unify:@;"
+            ^^ "@[<v>term is %a,@ mtyp is %a,@ ntyp is %a@]")
+            (pp_term ~typeannot:false)
+            term
+            (pp_type ~effannot:true)
+            mtyp
+            (pp_type ~effannot:true)
+            ntyp)
+      else Test.fail_report "tcheck: If's condition effect disagrees with annotation"
+    else Test.fail_report "tcheck: If with non-Boolean condition"
 ;;
