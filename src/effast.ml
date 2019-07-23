@@ -58,6 +58,7 @@ type term =
   (* [PatternMatch typ matched_trm cases eff] *)
   | PatternMatch of etype * term * (pattern * term) list * eff
   | Lambda of etype * variable * etype * term
+  (* [App (return_type, fn, arg_type, arg, eff)] *)
   | App of etype * term * etype * term * eff
   | Let of variable * etype * term * term * etype * eff
   | If of etype * term * term * term * eff
