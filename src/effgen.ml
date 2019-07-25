@@ -167,7 +167,7 @@ module StaticGenerators = struct
           Gen.frequency
             [ (* Generate no alphas *)
               (4, Gen.oneofl base_types);
-              (1, Gen.map (fun t -> List t) (recgen (n / 2)));
+              (1, Gen.map (fun t -> List t) (recgen (sqrt n)));
               ( 1,
                 Gen.map3
                   (fun t e t' -> Fun (t, e, t'))
