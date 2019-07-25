@@ -50,7 +50,7 @@ let check_opt_invariants (typ, name, payload_lst) =
     | "Some" ->
       (match payload_lst with
       | [ payload ] ->
-        if t = imm_type payload
+        if types_compat (imm_type payload) t
         then Ok typ
         else Error "check_opt_invariants: some payload type invariant failed"
       | _ -> Error "check_opt_invariants: some payload arity failed")
