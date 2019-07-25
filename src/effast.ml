@@ -167,7 +167,7 @@ module Ref = struct
 
   let deref_t =
     let new_tv = newtypevar () in
-    Fun (Ref (Typevar new_tv), (false, false), Typevar new_tv)
+    Fun (Ref (Typevar new_tv), (true, false), Typevar new_tv)
   ;;
 
   let deref_f = Variable (deref_t, "(!)")
