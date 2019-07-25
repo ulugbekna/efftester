@@ -130,7 +130,11 @@ let init_tri_env =
   List.fold_left
     (fun acc (var, t) -> add_var var t acc)
     (VarMap.empty, TypeMap.empty, TypeMap.empty)
-    [ (* These follow the order and specification of the Pervasives module
+    [ (* ref operators *)
+      ("ref", Ref.ref_t);
+      ("(!)", Ref.deref_t);
+      ("(:=)", Ref.update_t);
+      (* These follow the order and specification of the Pervasives module
          	  https://caml.inria.fr/pub/docs/manual-ocaml/libref/Pervasives.html *)
       (* Comparisons *)
       ( "(=)",

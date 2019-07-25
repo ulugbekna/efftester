@@ -26,6 +26,7 @@ type etype =
   | Bool
   | String
   | Option of etype
+  | Ref of etype
   | List of etype
   | Fun of etype * eff * etype
 
@@ -34,6 +35,7 @@ let rec ftv = function
   | Typevar a -> [ a ]
   | Unit | Int | Float | Bool | String -> []
   | Option e -> ftv e
+  | Ref t -> ftv t
   | List et -> ftv et
   | Fun (a, _, r) -> ftv a @ ftv r
 ;;
@@ -56,6 +58,7 @@ type term =
   (* [PatternMatch typ matched_trm cases eff] *)
   | PatternMatch of etype * term * (pattern * term) list * eff
   | Lambda of etype * variable * etype * term
+  (* [App (return_type, fn, arg_type, arg, eff)] *)
   | App of etype * term * etype * term * eff
   | Let of variable * etype * term * term * etype * eff
   | If of etype * term * term * term * eff
@@ -64,8 +67,6 @@ and pattern =
   | PattVar of variable
   | PattConstr of etype * string * pattern list
 
-let some typ payload eff = Constructor (typ, "Some", [ payload ], eff)
-let none typ = Constructor (typ, "None", [], (false, false))
 let no_eff = (false, false)
 let eff_join (ef, ev) (ef', ev') = (ef || ef', ev || ev')
 
@@ -78,9 +79,11 @@ let eff_leq eff eff_exp =
   | _, _ -> false
 ;;
 
+(** checks if given type variable (represented as int) occurs in given type expression *)
 let rec occurs tvar = function
   | Typevar a -> tvar = a
   | Option a -> occurs tvar a
+  | Ref a -> occurs tvar a
   | List a -> occurs tvar a
   | Fun (a, _, b) -> occurs tvar a || occurs tvar b
   | Unit | Int | Float | Bool | String -> false
@@ -92,13 +95,16 @@ let rec arity = function
   | _ -> 0
 ;;
 
-let rec subst repl t =
+(** [subst repl t] substitutes all type variables in [t] with mapping from type variables
+    to types given in [repl] *)
+let rec subst replacements t =
   match t with
   | Unit | Int | Float | Bool | String -> t
-  | Typevar a -> (try List.assoc a repl with Not_found -> t)
-  | Option e -> Option (subst repl e)
-  | List u -> List (subst repl u)
-  | Fun (l, e, r) -> Fun (subst repl l, e, subst repl r)
+  | Typevar i -> (try List.assoc i replacements with Not_found -> t)
+  | Option t' -> Option (subst replacements t')
+  | Ref t' -> Ref (subst replacements t')
+  | List t' -> List (subst replacements t')
+  | Fun (l, e, r) -> Fun (subst replacements l, e, subst replacements r)
 ;;
 
 let imm_type t =
@@ -139,8 +145,37 @@ let rec normalize_eff t =
   | Option t' ->
     let t'' = normalize_eff t' in
     Option t''
+  | Ref t' ->
+    let t'' = normalize_eff t' in
+    Ref t''
   | List t' ->
     let t'' = normalize_eff t' in
     List t''
   | Fun (s, _, t) -> Fun (normalize_eff s, no_eff, normalize_eff t)
 ;;
+
+let some typ payload eff = Constructor (typ, "Some", [ payload ], eff)
+let none typ = Constructor (typ, "None", [], (false, false))
+
+module Ref = struct
+  let ref_t =
+    let new_tv = newtypevar () in
+    Fun (Typevar new_tv, (true, false), Ref (Typevar new_tv))
+  ;;
+
+  let ref_f = Variable (ref_t, "ref")
+
+  let deref_t =
+    let new_tv = newtypevar () in
+    Fun (Ref (Typevar new_tv), (true, false), Typevar new_tv)
+  ;;
+
+  let deref_f = Variable (deref_t, "(!)")
+
+  let update_t =
+    let new_tv = newtypevar () in
+    Fun (Ref (Typevar new_tv), (false, false), Fun (Typevar new_tv, (true, false), Unit))
+  ;;
+
+  let update_f = Variable (update_t, "(:=)")
+end

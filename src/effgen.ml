@@ -167,7 +167,7 @@ module StaticGenerators = struct
           Gen.frequency
             [ (* Generate no alphas *)
               (4, Gen.oneofl base_types);
-              (1, Gen.map (fun t -> List t) (recgen (n / 2)));
+              (1, Gen.map (fun t -> List t) (recgen (sqrt n)));
               ( 1,
                 Gen.map3
                   (fun t e t' -> Fun (t, e, t'))
@@ -194,16 +194,18 @@ module GeneratorsWithContext (Ctx : Context) = struct
 
   (* Type-directed literal generator *)
   let literal_gen t _eff _size =
+    let fail s = Printf.sprintf "literal_gen: %s arg. should not happen" s |> failwith in
     match t with
     | Unit -> Gen.return LitUnit
     | Int -> Gen.map (fun i -> LitInt i) int_gen
     | Float -> Gen.map (fun f -> LitFloat f) float_gen
     | Bool -> Gen.map (fun b -> LitBool b) Gen.bool
     | String -> Gen.map (fun s -> LitStr s) string_gen
-    | Option _ -> failwith "literal_gen: option arg. should not happen"
-    | List _ -> failwith "literal_gen: list arg. should not happen"
-    | Typevar _ -> failwith "literal_gen: typevar arg. should not happen"
-    | Fun _ -> failwith "literal_gen: funtype arg. should not happen"
+    | Option _ -> fail "option"
+    | Ref _ -> fail "ref"
+    | List _ -> fail "list"
+    | Typevar _ -> fail "typevar"
+    | Fun _ -> fail "funtype"
   ;;
 
   (* Sized generator of variables according to the LIT rule
@@ -225,7 +227,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
     | List s when list_of_fun s -> []
     | Unit | Int | Float | Bool | String ->
       [ (6, Gen.map (fun l -> Some (Lit l)) (literal_gen s eff size)) ]
-    | List _ | Option _ | Fun _ | Typevar _ -> []
+    | List _ | Option _ | Ref _ | Fun _ | Typevar _ -> []
   ;;
 
   (* Sized generator of variables according to the VAR rule
@@ -274,7 +276,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
       return_opt (Lambda (Fun (s, myeff, imm_type m), x, s, m))
     in
     match u with
-    | Unit | Int | Float | Bool | String | Option _ | List _ | Typevar _ -> []
+    | Unit | Int | Float | Bool | String | Option _ | Ref _ | List _ | Typevar _ -> []
     | Fun (s, e, t) -> [ (8, gen s e t) ]
 
   (* Sized generator of applications (calls) according to the APP rule
@@ -565,7 +567,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
     in
     [ (3, gen) ]
 
-  and list_intro_rules env goal_typ eff size : (int * term option Gen.t) list =
+  and list_intro_rules env goal_typ eff size =
     let open Syntax in
     match goal_typ with
     | List elt_typ ->

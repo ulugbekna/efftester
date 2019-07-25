@@ -17,6 +17,7 @@ let rec unify_list = function
     | Bool, Bool -> sub
     | String, String -> sub
     | Option a, Option b -> unify_list [ (a, b) ] @ sub
+    | Ref a, Ref b -> unify_list [ (a, b) ] @ sub
     | Typevar a, Typevar b -> if a = b then sub else (a, r) :: sub
     | List a, List b ->
       let sub' = unify_list [ (a, b) ] in
@@ -32,6 +33,7 @@ let rec unify_list = function
     | Bool, _
     | String, _
     | Option _, _
+    | Ref _, _
     | List _, _
     | Fun _, _ ->
       raise No_solution)
@@ -55,6 +57,8 @@ let rec types_compat t t' =
   | String, _ -> false
   | Option a, Option b -> types_compat a b
   | Option _, _ -> false
+  | Ref a, Ref b -> types_compat a b
+  | Ref _, _ -> false
   | Fun (at, e, rt), Fun (at', e', rt') ->
     types_compat at' at && types_compat rt rt' && eff_leq e e'
   | Fun _, _ -> false
