@@ -629,29 +629,24 @@ module GeneratorsWithContext (Ctx : Context) = struct
     pick shuffled_rules
 
   and term_gen_sized env goal eff size =
+    let apply f = f env goal eff size in
+    let apply_concat lst = List.map apply lst |> List.concat in
     if size = 0
-    then (
-      let rules =
-        List.concat [ lit_rules env goal eff size; var_rules env goal eff size ]
-      in
-      term_from_rules rules)
-    else (
-      let rules =
-        List.concat
-          [ lit_rules env goal eff size;
-            option_intro_rules env goal eff size;
-            option_elim_rules env goal eff size;
-            list_intro_rules env goal eff size;
-            (*var_rules env goal eff size;*)
-            (* var rule is covered by indir with no args *)
-            app_rules env goal eff size;
-            lam_rules env goal eff size;
-            indir_rules env goal eff size;
-            let_rules env goal eff size;
-            if_rules env goal eff size
-          ]
-      in
-      term_from_rules rules)
+    then apply_concat [ lit_rules; var_rules ] |> term_from_rules
+    else
+      apply_concat
+        [ lit_rules;
+          option_intro_rules;
+          option_elim_rules;
+          list_intro_rules;
+          (* var rule is covered by indir with no args *)
+          app_rules;
+          lam_rules;
+          indir_rules;
+          let_rules;
+          if_rules
+        ]
+      |> term_from_rules
   ;;
 
   let list_permute_term_gen_rec_wrapper env goal eff =
