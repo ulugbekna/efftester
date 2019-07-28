@@ -5,6 +5,30 @@ open Effenv
 open Effunif
 open Effprint
 
+(** Auxiliary functions *)
+
+(* TODO: replace by [QCheck.Gen.float_bound_inclusive] from new QCheck release *)
+let float_bound_inclusive bound st = Random.State.float st bound
+
+(* TODO: replace by [QCheck.Gen.shuffle_w_l] from new QCheck release *)
+let shuffle_w_l l st =
+  let sample (w, v) =
+    let fl_w = float_of_int w in
+    (float_bound_inclusive 1. st ** (1. /. fl_w), v)
+  in
+  let samples = List.map sample l in
+  List.sort (fun (w1, _) (w2, _) -> compare w2 w1) samples |> List.map snd
+;;
+
+let rec first_some f lst =
+  match lst with
+  | [] -> None
+  | x :: xs ->
+    (match f x with
+    | Some _ as res -> res
+    | None -> first_some f xs)
+;;
+
 (* The error-reporting code uses either failwith(f) or
    QCheck.Test.fail_report(f).
 
@@ -600,64 +624,35 @@ module GeneratorsWithContext (Ctx : Context) = struct
       [ (3, gen) ]
     | _ -> []
 
-  (* [gen_term_from_rules env goal size rules] returns a constant generator with a term
-     wrapped in an option, in which the term was generated using a randomly picked
-     generator from the {!rules} list
+  (* [term_from_rules rules] returns a constant generator with a term option,
+     in which the term was generated using a randomly picked generator from [rules].
 
      Generators are picked according to their weights.
   *)
-  and gen_term_from_rules _env _goal _size rules =
-    let int_below_gen bound st = Random.State.int st bound in
-    let weights_sum = List.fold_left (fun acc (w, _g) -> acc + w) 0 rules in
-    (* we reimplement QCheck.Gen.frequency because we want it to also return the weight of
-       the picked element (to update weights sum) and the list without that element *)
-    let gen_freq lst rand_k =
-      let rec pick lst (acc_lst, acc_sum) =
-        match lst with
-        | [] -> failwith "gen_term_from_rules: gen_freq: too large rand_k"
-        | ((w, _g) as curr) :: rest ->
-          if rand_k < acc_sum + w
-          then (curr, List.rev_append acc_lst rest)
-          else pick rest (curr :: acc_lst, acc_sum + w)
-      in
-      pick lst ([], 0)
-    in
-    let rec pick_all rules w_sum : term option Gen.t =
-      match rules with
-      | [] -> Gen.return None
-      | rls ->
-        let open Gen in
-        int_below_gen w_sum >|= gen_freq rls >>= fun ((w, g), new_rls) ->
-        g >>= function
-        | Some _ as t_opt -> Gen.return t_opt
-        | None -> pick_all new_rls (w_sum - w)
-    in
-    pick_all rules weights_sum
+  and term_from_rules rules : term option Gen.t =
+   fun st ->
+    let shuffled_rules = shuffle_w_l rules st in
+    first_some (fun rule -> rule st) shuffled_rules
 
   and term_gen_sized env goal eff size =
+    let apply f = f env goal eff size in
+    let apply_concat lst = List.map apply lst |> List.concat in
     if size = 0
-    then (
-      let rules =
-        List.concat [ lit_rules env goal eff size; var_rules env goal eff size ]
-      in
-      gen_term_from_rules env goal size rules)
-    else (
-      let rules =
-        List.concat
-          [ lit_rules env goal eff size;
-            option_intro_rules env goal eff size;
-            option_elim_rules env goal eff size;
-            list_intro_rules env goal eff size;
-            (*var_rules env goal eff size;*)
-            (* var rule is covered by indir with no args *)
-            app_rules env goal eff size;
-            lam_rules env goal eff size;
-            indir_rules env goal eff size;
-            let_rules env goal eff size;
-            if_rules env goal eff size
-          ]
-      in
-      gen_term_from_rules env goal size rules)
+    then apply_concat [ lit_rules; var_rules ] |> term_from_rules
+    else
+      apply_concat
+        [ lit_rules;
+          option_intro_rules;
+          option_elim_rules;
+          list_intro_rules;
+          (* var rule is covered by indir with no args *)
+          app_rules;
+          lam_rules;
+          indir_rules;
+          let_rules;
+          if_rules
+        ]
+      |> term_from_rules
   ;;
 
   let list_permute_term_gen_rec_wrapper env goal eff =
