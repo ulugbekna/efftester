@@ -11,11 +11,7 @@ let rec unify_list = function
   | (l, r) :: rest ->
     let sub = unify_list rest in
     (match (subst sub l, subst sub r) with
-    | Unit, Unit -> sub
-    | Int, Int -> sub
-    | Float, Float -> sub
-    | Bool, Bool -> sub
-    | String, String -> sub
+    | Unit, Unit | Int, Int | Float, Float | Bool, Bool | String, String -> sub
     | Option a, Option b -> unify_list [ (a, b) ] @ sub
     | Ref a, Ref b -> unify_list [ (a, b) ] @ sub
     | Typevar a, Typevar b -> if a = b then sub else (a, r) :: sub
