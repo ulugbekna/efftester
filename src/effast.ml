@@ -17,7 +17,7 @@ let resettypevar, newtypevar = make_counter (fun n -> n)
 let resetvar, newvar = make_counter (Printf.sprintf "var%d")
 let reseteffvar, neweffvar = make_counter (Printf.sprintf "eff%d")
 
-(** {!etype} is used to represent OCaml types that are present in our generator *)
+(** type [etype] is used to represent OCaml types that are present in Efftester *)
 type etype =
   | Typevar of typevar
   | Unit
@@ -30,7 +30,7 @@ type etype =
   | List of etype
   | Fun of etype * eff * etype
 
-(* [ftv expr] returns free typevariables in {!expr} *)
+(** [ftv expr] returns free typevariables in {!expr} *)
 let rec ftv = function
   | Typevar a -> [ a ]
   | Unit | Int | Float | Bool | String -> []
@@ -40,6 +40,7 @@ let rec ftv = function
   | Fun (a, _, r) -> ftv a @ ftv r
 ;;
 
+(** type [lit] is used to represent literal values present in OCaml and available in Efftester *)
 type lit =
   | LitUnit
   | LitInt of int
@@ -47,8 +48,12 @@ type lit =
   | LitBool of bool
   | LitStr of string
 
-(** type term is used to represent all syntax constructs (of OCaml) available in our
-generator  *)
+(** type [pattern] is used to represent patterns in OCaml *)
+type pattern =
+  | PattVar of variable
+  | PattConstr of etype * string * pattern list
+
+(** type [term] is used to represent terms of OCaml available Efftester *)
 type term =
   | Lit of lit
   | Variable of etype * variable
@@ -62,10 +67,6 @@ type term =
   | App of etype * term * etype * term * eff
   | Let of variable * etype * term * term * etype * eff
   | If of etype * term * term * term * eff
-
-and pattern =
-  | PattVar of variable
-  | PattConstr of etype * string * pattern list
 
 let no_eff = (false, false)
 let eff_join (ef, ev) (ef', ev') = (ef || ef', ev || ev')
