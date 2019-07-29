@@ -45,29 +45,26 @@ let unify r t = try Sol (unify_list [ (r, t) ]) with No_solution -> No_sol
 (* or framed differently: whether the second is a particular instance of the first *)
 let rec types_compat t t' =
   match (t, t') with
-  | Unit, Unit -> true
-  | Unit, _ -> false
-  | Int, Int -> true
-  | Int, _ -> false
-  | Float, Float -> true
-  | Float, _ -> false
-  | Bool, Bool -> true
-  | Bool, _ -> false
-  | String, String -> true
-  | String, _ -> false
+  | Unit, Unit | Int, Int | Float, Float | Bool, Bool | String, String -> true
   | Option a, Option b -> types_compat a b
-  | Option _, _ -> false
   | Ref a, Ref b -> types_compat a b
-  | Ref _, _ -> false
   | Fun (at, e, rt), Fun (at', e', rt') ->
     types_compat at' at && types_compat rt rt' && eff_leq e e'
-  | Fun _, _ -> false
   | List et, List et' -> types_compat et et'
-  | List _, _ -> false
   | Typevar _, _ ->
     (match unify t t' with
     | No_sol -> false
     | Sol _ -> true)
+  | Unit, _
+  | Int, _
+  | Float, _
+  | Bool, _
+  | String, _
+  | Option _, _
+  | Ref _, _
+  | Fun _, _
+  | List _, _ ->
+    false
 ;;
 
 let rec get_return_types = function
