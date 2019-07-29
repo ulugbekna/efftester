@@ -1,7 +1,7 @@
 (** AST type definitions  *)
 
-type variable = string
-type eff = bool * bool
+(* SECTION: handling type variables *)
+
 type typevar = int
 
 let make_counter of_int =
@@ -17,6 +17,13 @@ let resettypevar, newtypevar = make_counter (fun n -> n)
 let resetvar, newvar = make_counter (Printf.sprintf "var%d")
 let reseteffvar, neweffvar = make_counter (Printf.sprintf "eff%d")
 
+(* SECTION: handling types and effects *)
+
+type variable = string
+type eff = bool * bool
+
+(* types *)
+
 (** type [etype] is used to represent OCaml types that are present in Efftester *)
 type etype =
   | Typevar of typevar
@@ -30,7 +37,7 @@ type etype =
   | List of etype
   | Fun of etype * eff * etype
 
-(** [ftv expr] returns free typevariables in {!expr} *)
+(** [ftv expr] returns free type variables in {!expr} *)
 let rec ftv = function
   | Typevar a -> [ a ]
   | Unit | Int | Float | Bool | String -> []
@@ -39,6 +46,64 @@ let rec ftv = function
   | List et -> ftv et
   | Fun (a, _, r) -> ftv a @ ftv r
 ;;
+
+(** checks if given type variable (represented as int) occurs in given type expression *)
+let rec occurs tvar = function
+  | Typevar a -> tvar = a
+  | Option a -> occurs tvar a
+  | Ref a -> occurs tvar a
+  | List a -> occurs tvar a
+  | Fun (a, _, b) -> occurs tvar a || occurs tvar b
+  | Unit | Int | Float | Bool | String -> false
+;;
+
+(** [arity fn_typ] determines arity of a function type [fn_typ] *)
+let rec arity = function
+  | Fun (_, _, b) -> 1 + arity b
+  | _ -> 0
+;;
+
+(** [subst repl t] substitutes all type variables in [t] with mapping from type variables
+    to types given in [repl] *)
+let rec subst replacements t =
+  match t with
+  | Unit | Int | Float | Bool | String -> t
+  | Typevar i -> (try List.assoc i replacements with Not_found -> t)
+  | Option t' -> Option (subst replacements t')
+  | Ref t' -> Ref (subst replacements t')
+  | List t' -> List (subst replacements t')
+  | Fun (l, e, r) -> Fun (subst replacements l, e, subst replacements r)
+;;
+
+(* effects *)
+let no_eff = (false, false)
+let eff_join (ef, ev) (ef', ev') = (ef || ef', ev || ev')
+
+let eff_leq eff eff_exp =
+  match (eff, eff_exp) with
+  | (false, true), _ | _, (false, true) -> failwith "eff_leq: this should not happen"
+  | (false, false), _ -> true (* no eff, compat with anything *)
+  | (true, false), (true, _) -> true
+  | (true, true), (true, true) -> true
+  | _, _ -> false
+;;
+
+let rec normalize_eff t =
+  match t with
+  | Typevar _ | Unit | Int | Float | Bool | String -> t
+  | Option t' ->
+    let t'' = normalize_eff t' in
+    Option t''
+  | Ref t' ->
+    let t'' = normalize_eff t' in
+    Ref t''
+  | List t' ->
+    let t'' = normalize_eff t' in
+    List t''
+  | Fun (s, _, t) -> Fun (normalize_eff s, no_eff, normalize_eff t)
+;;
+
+(* SECTION: handle terms *)
 
 (** type [lit] is used to represent literal values present in OCaml and available in Efftester *)
 type lit =
@@ -68,45 +133,7 @@ type term =
   | Let of variable * etype * term * term * etype * eff
   | If of etype * term * term * term * eff
 
-let no_eff = (false, false)
-let eff_join (ef, ev) (ef', ev') = (ef || ef', ev || ev')
-
-let eff_leq eff eff_exp =
-  match (eff, eff_exp) with
-  | (false, true), _ | _, (false, true) -> failwith "eff_leq: this should not happen"
-  | (false, false), _ -> true (* no eff, compat with anything *)
-  | (true, false), (true, _) -> true
-  | (true, true), (true, true) -> true
-  | _, _ -> false
-;;
-
-(** checks if given type variable (represented as int) occurs in given type expression *)
-let rec occurs tvar = function
-  | Typevar a -> tvar = a
-  | Option a -> occurs tvar a
-  | Ref a -> occurs tvar a
-  | List a -> occurs tvar a
-  | Fun (a, _, b) -> occurs tvar a || occurs tvar b
-  | Unit | Int | Float | Bool | String -> false
-;;
-
-(** [arity f_typ] determines arity of a function type {!f_typ} *)
-let rec arity = function
-  | Fun (_, _, b) -> 1 + arity b
-  | _ -> 0
-;;
-
-(** [subst repl t] substitutes all type variables in [t] with mapping from type variables
-    to types given in [repl] *)
-let rec subst replacements t =
-  match t with
-  | Unit | Int | Float | Bool | String -> t
-  | Typevar i -> (try List.assoc i replacements with Not_found -> t)
-  | Option t' -> Option (subst replacements t')
-  | Ref t' -> Ref (subst replacements t')
-  | List t' -> List (subst replacements t')
-  | Fun (l, e, r) -> Fun (subst replacements l, e, subst replacements r)
-;;
+(* SECTION: handle typing and effect-bookkeeping of syntax constructs *)
 
 let imm_type t =
   let lit_type l =
@@ -140,20 +167,7 @@ let imm_eff t =
   | If (_, _, _, _, e) -> e
 ;;
 
-let rec normalize_eff t =
-  match t with
-  | Typevar _ | Unit | Int | Float | Bool | String -> t
-  | Option t' ->
-    let t'' = normalize_eff t' in
-    Option t''
-  | Ref t' ->
-    let t'' = normalize_eff t' in
-    Ref t''
-  | List t' ->
-    let t'' = normalize_eff t' in
-    List t''
-  | Fun (s, _, t) -> Fun (normalize_eff s, no_eff, normalize_eff t)
-;;
+(* SECTION: helper functions to create terms *)
 
 let some typ payload eff = Constructor (typ, "Some", [ payload ], eff)
 let none typ = Constructor (typ, "None", [], (false, false))
