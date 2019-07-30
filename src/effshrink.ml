@@ -107,6 +107,7 @@ let rec minimal_term ty =
   | String -> Lit (LitStr "")
   | Option _ -> Constructor (ty, "None", [], no_eff)
   | Ref t -> App (ty, Ref.ref_f, t, minimal_term t, (true, false))
+  | Tuple _ -> failwith "not implemented" (* FIXME: implement *)
   | List _ -> ListTrm (ty, [], no_eff)
   | Fun (input_t, _, output_t) ->
     let body = minimal_term output_t in

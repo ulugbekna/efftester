@@ -15,6 +15,7 @@ let rec unify_list = function
     | Option a, Option b -> unify_list [ (a, b) ] @ sub
     | Ref a, Ref b -> unify_list [ (a, b) ] @ sub
     | Typevar a, Typevar b -> if a = b then sub else (a, r) :: sub
+    | Tuple t_lst1, Tuple t_lst2 -> (List.combine t_lst1 t_lst2 |> unify_list) @ sub
     | List a, List b ->
       let sub' = unify_list [ (a, b) ] in
       sub' @ sub
@@ -30,6 +31,7 @@ let rec unify_list = function
     | String, _
     | Option _, _
     | Ref _, _
+    | Tuple _, _
     | List _, _
     | Fun _, _ ->
       raise No_solution)
@@ -44,9 +46,11 @@ let rec types_compat t t' =
   | Unit, Unit | Int, Int | Float, Float | Bool, Bool | String, String -> true
   | Option a, Option b -> types_compat a b
   | Ref a, Ref b -> types_compat a b
+  | Tuple t_lst1, Tuple t_lst2 ->
+    List.for_all2 (fun t1 t2 -> types_compat t1 t2) t_lst1 t_lst2
+  | List et, List et' -> types_compat et et'
   | Fun (at, e, rt), Fun (at', e', rt') ->
     types_compat at' at && types_compat rt rt' && eff_leq e e'
-  | List et, List et' -> types_compat et et'
   | Typevar _, _ ->
     (match unify t t' with
     | No_sol -> false
@@ -58,8 +62,9 @@ let rec types_compat t t' =
   | String, _
   | Option _, _
   | Ref _, _
-  | Fun _, _
-  | List _, _ ->
+  | Tuple _, _
+  | List _, _
+  | Fun _, _ ->
     false
 ;;
 

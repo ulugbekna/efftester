@@ -46,6 +46,17 @@ let pp_type ?(effannot = false) ppf etype =
     let rec self ppf = function
       | Option e -> Format.fprintf ppf "%a@ option" self e
       | Ref e -> Format.fprintf ppf "%a@ ref" self e
+      | Tuple t_lst ->
+        let pp_inner_type ppf = function
+          | Tuple _ as t -> Format.fprintf ppf "@(%a@)" self t
+          | other -> self ppf other
+        in
+        let rec pp_tuple ppf = function
+          | [] -> ()
+          | [ t ] -> Format.fprintf ppf "%a@" pp_inner_type t
+          | t :: ts -> Format.fprintf ppf "%a * %a@" pp_inner_type t pp_tuple ts
+        in
+        Format.fprintf ppf "%a@" pp_tuple t_lst
       | List s -> Format.fprintf ppf "%a@ list" self s
       | other -> below ppf other
     in
@@ -57,7 +68,7 @@ let pp_type ?(effannot = false) ppf etype =
     | Float -> Format.fprintf ppf "float"
     | Bool -> Format.fprintf ppf "bool"
     | String -> Format.fprintf ppf "string"
-    | (Fun _ | Option _ | Ref _ | List _) as non_simple ->
+    | (Fun _ | Option _ | Ref _ | Tuple _ | List _) as non_simple ->
       Format.fprintf ppf "@[<2>(%a)@]" pp_type non_simple
   in
   pp_type ppf etype

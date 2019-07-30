@@ -227,6 +227,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
     | String -> Gen.map (fun s -> LitStr s) string_gen
     | Option _ -> fail "option"
     | Ref _ -> fail "ref"
+    | Tuple _ -> fail "tuple"
     | List _ -> fail "list"
     | Typevar _ -> fail "typevar"
     | Fun _ -> fail "funtype"
@@ -251,7 +252,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
     | List s when list_of_fun s -> []
     | Unit | Int | Float | Bool | String ->
       [ (6, Gen.map (fun l -> Some (Lit l)) (literal_gen s eff size)) ]
-    | List _ | Option _ | Ref _ | Fun _ | Typevar _ -> []
+    | Tuple _ | List _ | Option _ | Ref _ | Fun _ | Typevar _ -> []
   ;;
 
   (* Sized generator of variables according to the VAR rule
@@ -300,7 +301,9 @@ module GeneratorsWithContext (Ctx : Context) = struct
       return_opt (Lambda (Fun (s, myeff, imm_type m), x, s, m))
     in
     match u with
-    | Unit | Int | Float | Bool | String | Option _ | Ref _ | List _ | Typevar _ -> []
+    | Unit | Int | Float | Bool | String | Option _ | Ref _ | Tuple _ | List _
+    | Typevar _ ->
+      []
     | Fun (s, e, t) -> [ (8, gen s e t) ]
 
   (* Sized generator of applications (calls) according to the APP rule

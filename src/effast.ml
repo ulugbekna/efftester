@@ -34,15 +34,17 @@ type etype =
   | String
   | Option of etype
   | Ref of etype
+  | Tuple of etype list
   | List of etype
   | Fun of etype * eff * etype
 
-(** [ftv expr] returns free type variables in {!expr} *)
+(** [ftv expr] returns free type variables in [expr] *)
 let rec ftv = function
   | Typevar a -> [ a ]
   | Unit | Int | Float | Bool | String -> []
   | Option e -> ftv e
   | Ref t -> ftv t
+  | Tuple t_lst -> List.map ftv t_lst |> List.concat (* duplicate elements allowed? *)
   | List et -> ftv et
   | Fun (a, _, r) -> ftv a @ ftv r
 ;;
@@ -52,6 +54,7 @@ let rec occurs tvar = function
   | Typevar a -> tvar = a
   | Option a -> occurs tvar a
   | Ref a -> occurs tvar a
+  | Tuple t_lst -> List.exists (fun t -> occurs tvar t) t_lst
   | List a -> occurs tvar a
   | Fun (a, _, b) -> occurs tvar a || occurs tvar b
   | Unit | Int | Float | Bool | String -> false
@@ -71,6 +74,7 @@ let rec subst replacements t =
   | Typevar i -> (try List.assoc i replacements with Not_found -> t)
   | Option t' -> Option (subst replacements t')
   | Ref t' -> Ref (subst replacements t')
+  | Tuple t_lst -> Tuple (List.map (fun t -> subst replacements t) t_lst)
   | List t' -> List (subst replacements t')
   | Fun (l, e, r) -> Fun (subst replacements l, e, subst replacements r)
 ;;
@@ -91,15 +95,10 @@ let eff_leq eff eff_exp =
 let rec normalize_eff t =
   match t with
   | Typevar _ | Unit | Int | Float | Bool | String -> t
-  | Option t' ->
-    let t'' = normalize_eff t' in
-    Option t''
-  | Ref t' ->
-    let t'' = normalize_eff t' in
-    Ref t''
-  | List t' ->
-    let t'' = normalize_eff t' in
-    List t''
+  | Option t' -> Option (normalize_eff t')
+  | Ref t' -> Ref (normalize_eff t')
+  | Tuple t_lst -> Tuple (List.map normalize_eff t_lst)
+  | List t' -> List (normalize_eff t')
   | Fun (s, _, t) -> Fun (normalize_eff s, no_eff, normalize_eff t)
 ;;
 
