@@ -105,9 +105,20 @@ let rec minimal_term ty =
   | Float -> Lit (LitFloat 0.)
   | Bool -> Lit (LitBool true)
   | String -> Lit (LitStr "")
-  | Option _ -> Constructor (ty, "None", [], no_eff)
+  | Option _ -> none ty
   | Ref t -> App (ty, Ref.ref_f, t, minimal_term t, (true, false))
-  | Tuple _ -> failwith "not implemented" (* FIXME: implement *)
+  | Tuple t_lst ->
+    let arity = List.length t_lst in
+    let elts = List.map minimal_term t_lst in
+    let eff =
+      List.fold_left
+        (fun (acc1, acc2) trm ->
+          let eff1, eff2 = imm_eff trm in
+          (acc1 || eff1, acc2 || eff2))
+        (false, false)
+        elts
+    in
+    Constructor (ty, TupleArity arity, elts, eff)
   | List _ -> ListTrm (ty, [], no_eff)
   | Fun (input_t, _, output_t) ->
     let body = minimal_term output_t in

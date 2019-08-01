@@ -34,7 +34,7 @@ let tcheck_lit l =
   | LitStr _ -> (String, no_eff)
 ;;
 
-let check_opt_invariants (typ, name, payload_lst) =
+let check_option_invars variant_constr =
   (* invariants:
     - typ must be Option _
     - name must be either "Some" or "None"
@@ -44,24 +44,28 @@ let check_opt_invariants (typ, name, payload_lst) =
       | "None" -> payload list must be an empty list
       | _ -> "option adt name invariant failed"
    *)
-  match typ with
-  | Option t ->
-    (match name with
-    | "Some" ->
-      (match payload_lst with
-      | [ payload ] ->
-        if types_compat (imm_type payload) t
-        then Ok typ
-        else Error "check_opt_invariants: some payload type invariant failed"
-      | _ -> Error "check_opt_invariants: some payload arity failed")
-    | "None" ->
-      (match payload_lst with
-      | [] -> Ok typ
-      | _ -> Error "check_opt_invariants: none payload arity failed")
-    | _ -> Error "check_opt_invariants: name invariant failed")
-  | _ -> Error "check_opt_invariants: option type invariant failed"
+  match variant_constr with
+  | Constructor (typ, Variant name, args, _) ->
+    (match typ with
+    | Option t ->
+      (match name with
+      | "Some" ->
+        (match args with
+        | [ payload ] ->
+          if types_compat (imm_type payload) t
+          then Ok typ
+          else Error "check_opt_invariants: some payload type invariant failed"
+        | _ -> Error "check_opt_invariants: some payload arity failed")
+      | "None" ->
+        (match args with
+        | [] -> Ok typ
+        | _ -> Error "check_opt_invariants: none payload arity failed")
+      | _ -> Error "check_opt_invariants: name invariant failed")
+    | _ -> Error "check_opt_invariants: option type invariant failed")
+  | _ -> invalid_arg "Effcheck.check_option_invars"
 ;;
 
+(** checks that given term has indicated type and holds invariants associated with it *)
 let rec tcheck env term =
   match term with
   | Lit l -> tcheck_lit l
@@ -82,16 +86,32 @@ let rec tcheck env term =
         lst;
       (typ, eff)
     | _ -> Test.fail_report "tcheck: ListTrm must have a list type")
-  | Constructor (typ, name, payload_lst, eff) ->
-    (match check_opt_invariants (typ, name, payload_lst) with
-    | Ok _ ->
-      List.iter
-        (fun trm ->
-          (* ignore value but propatage error *)
-          tcheck env trm |> ignore)
-        payload_lst;
-      (typ, eff)
-    | Error msg -> Test.fail_report msg)
+  | Constructor (typ, descr, _, eff) ->
+    let tcheck_variant term =
+      match check_option_invars term with
+      | Ok _ -> (typ, eff)
+      | Error e -> failwith e
+    in
+    let tcheck_tuple = function
+      | Constructor (typ, TupleArity i, args, eff) ->
+        (* "tuple" term invariants:
+          1) arity i must be equal to length of args
+          2) typ must be [Tuple lst], where [lst] lists types that are same as types of args
+        *)
+        (* check invar (1) *)
+        if not (List.length args = i) then failwith "tcheck: arity invariant failed";
+        (* check invar (2) *)
+        (match typ with
+        | Tuple t_lst ->
+          if not (List.for_all2 (fun trm t -> types_compat (imm_type trm) t) args t_lst)
+          then failwith "tcheck: type mismatch"
+        | _ -> failwith "tcheck: cannot be reached");
+        (typ, eff)
+      | _ -> invalid_arg "Effcheck.tcheck.tcheck_tuple"
+    in
+    (match descr with
+    | Variant _ -> tcheck_variant term
+    | TupleArity _ -> tcheck_tuple term)
   | PatternMatch (typ, matched_trm, cases, eff) ->
     let has_pat_type_mismatch pat =
       match pat with

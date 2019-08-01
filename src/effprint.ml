@@ -149,13 +149,21 @@ let pp_term ?(typeannot = true) ppf term =
       else Format.fprintf ppf "%s" x
     in
     match t with
-    | Constructor (_, name, args, _) ->
-      Format.fprintf
-        ppf
-        "@[<2>%s%a@]"
-        name
-        (pp_constructor_args ~one:pp_arg ~several:pp_app)
-        args
+    | Constructor (_, descr, args, _) ->
+      (match descr with
+      | Variant name ->
+        Format.fprintf
+          ppf
+          "@[<2>%s%a@]"
+          name
+          (pp_constructor_args ~one:pp_arg ~several:pp_app)
+          args
+      | TupleArity _ ->
+        Format.fprintf
+          ppf
+          "@[<2>%a@]"
+          (pp_constructor_args ~one:pp_arg ~several:pp_app)
+          args)
     | PatternMatch (_, match_trm, branches, _) ->
       let pp_case ppf (pattern, body) =
         Format.fprintf ppf "@;| @[<2>%a@ ->@ %a@]" pp_pattern pattern pp_arg body

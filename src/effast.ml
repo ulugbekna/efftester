@@ -112,6 +112,13 @@ type lit =
   | LitBool of bool
   | LitStr of string
 
+(* type [constr_descr] is used to differentiate between use of [Constructor] for tuples and variants *)
+type constr_descr =
+  | TupleArity of int
+  | Variant of string
+
+(* variant name *)
+
 (** type [pattern] is used to represent patterns in OCaml *)
 type pattern =
   | PattVar of variable
@@ -122,8 +129,8 @@ type term =
   | Lit of lit
   | Variable of etype * variable
   | ListTrm of etype * term list * eff
-  (* [Constructor (type, name, payload_lst)] is used to construct ADT variants *)
-  | Constructor of etype * string * term list * eff
+  (* [Constructor (type, descr, payload_lst)] is used to construct ADT variants *)
+  | Constructor of etype * constr_descr * term list * eff
   (* [PatternMatch typ matched_trm cases eff] *)
   | PatternMatch of etype * term * (pattern * term) list * eff
   | Lambda of etype * variable * etype * term
@@ -168,8 +175,13 @@ let imm_eff t =
 
 (* SECTION: helper functions to create terms *)
 
-let some typ payload eff = Constructor (typ, "Some", [ payload ], eff)
-let none typ = Constructor (typ, "None", [], (false, false))
+let tuple_arity = function
+  | Constructor (_, TupleArity i, _, _) -> i
+  | _ -> failwith "Effast.tuple_arity: tuple_arity is applied to a non-tuple"
+;;
+
+let some typ payload eff = Constructor (typ, Variant "Some", [ payload ], eff)
+let none typ = Constructor (typ, Variant "None", [], no_eff)
 
 module Ref = struct
   let ref_t =
