@@ -243,13 +243,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
        env |- l : s
 *)
   let lit_rules _env s eff size =
-    let rec list_of_fun = function
-      | List s -> list_of_fun s
-      | Fun _ -> true
-      | _ -> false
-    in
     match s with
-    | List s when list_of_fun s -> []
     | Unit | Int | Float | Bool | String ->
       [ (6, Gen.map (fun l -> Some (Lit l)) (literal_gen s eff size)) ]
     | Tuple _ | List _ | Option _ | Ref _ | Fun _ | Typevar _ -> []
