@@ -26,7 +26,7 @@ let pp_tvar ppf a = Format.fprintf ppf "'a%d" a
 
 let pp_type ?(effannot = false) ppf etype =
   let rec pp_type ppf t =
-    let below = pp_param_type in
+    let below = pp_tuple_type in
     let rec self ppf = function
       | Fun (s, e, t) ->
         Format.fprintf
@@ -41,22 +41,21 @@ let pp_type ?(effannot = false) ppf etype =
       | other -> below ppf other
     in
     Format.fprintf ppf "@[<hv>%a@]" self t
+  and pp_tuple_type ppf t =
+    let below = pp_param_type in
+    match t with
+    | Tuple t_lst ->
+      Format.pp_print_list
+        ~pp_sep:(fun ppf () -> Format.fprintf ppf " * ")
+        below
+        ppf
+        t_lst
+    | other -> below ppf other
   and pp_param_type ppf t =
     let below = pp_simple_type in
     let rec self ppf = function
       | Option e -> Format.fprintf ppf "%a@ option" self e
       | Ref e -> Format.fprintf ppf "%a@ ref" self e
-      | Tuple t_lst ->
-        let pp_inner_type ppf = function
-          | Tuple _ as t -> Format.fprintf ppf "@(%a@)" self t
-          | other -> self ppf other
-        in
-        let rec pp_tuple ppf = function
-          | [] -> ()
-          | [ t ] -> Format.fprintf ppf "%a@" pp_inner_type t
-          | t :: ts -> Format.fprintf ppf "%a * %a@" pp_inner_type t pp_tuple ts
-        in
-        Format.fprintf ppf "%a@" pp_tuple t_lst
       | List s -> Format.fprintf ppf "%a@ list" self s
       | other -> below ppf other
     in
