@@ -110,15 +110,7 @@ let rec minimal_term ty =
   | Tuple t_lst ->
     let arity = List.length t_lst in
     let elts = List.map minimal_term t_lst in
-    let eff =
-      List.fold_left
-        (fun (acc1, acc2) trm ->
-          let eff1, eff2 = imm_eff trm in
-          (acc1 || eff1, acc2 || eff2))
-        (false, false)
-        elts
-    in
-    Constructor (ty, TupleArity arity, elts, eff)
+    Constructor (ty, TupleArity arity, elts, no_eff)
   | List _ -> ListTrm (ty, [], no_eff)
   | Fun (input_t, _, output_t) ->
     let body = minimal_term output_t in
