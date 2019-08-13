@@ -34,7 +34,7 @@ let tcheck_lit l =
   | LitStr _ -> (String, no_eff)
 ;;
 
-let check_option_invars variant_constr =
+let check_option_invars typ name args =
   (* invariants:
     - typ must be Option _
     - name must be either "Some" or "None"
@@ -44,25 +44,37 @@ let check_option_invars variant_constr =
       | "None" -> payload list must be an empty list
       | _ -> "option adt name invariant failed"
    *)
-  match variant_constr with
-  | Constructor (typ, Variant name, args, _) ->
-    (match typ with
-    | Option t ->
-      (match name with
-      | "Some" ->
-        (match args with
-        | [ payload ] ->
-          if types_compat (imm_type payload) t
-          then Ok typ
-          else Error "check_opt_invariants: some payload type invariant failed"
-        | _ -> Error "check_opt_invariants: some payload arity failed")
-      | "None" ->
-        (match args with
-        | [] -> Ok typ
-        | _ -> Error "check_opt_invariants: none payload arity failed")
-      | _ -> Error "check_opt_invariants: name invariant failed")
-    | _ -> Error "check_opt_invariants: option type invariant failed")
-  | _ -> invalid_arg "Effcheck.check_option_invars"
+  match typ with
+  | Option t ->
+    (match name with
+    | "Some" ->
+      (match args with
+      | [ payload ] ->
+        if types_compat (imm_type payload) t
+        then Ok typ
+        else Error "check_option_invariants: some payload type invariant failed"
+      | _ -> Error "check_option_invars: some payload arity failed")
+    | "None" ->
+      (match args with
+      | [] -> Ok typ
+      | _ -> Error "check_option_invars: none payload arity failed")
+    | _ -> Error "check_option_invars: name invariant failed")
+  | _ -> Error "check_option_invars: option type invariant failed"
+;;
+
+let check_tuple_invars typ arity args =
+  (* check invar #1: arity i must be equal to length of args *)
+  if not (List.length args = arity)
+  then Error "tcheck: tuple arity invariant failed"
+  else (
+    (* check invar #2:
+       [typ] must be [Tuple lst], where [lst] lists types that are same as types of args *)
+    match typ with
+    | Tuple t_lst ->
+      if not (List.for_all2 (fun trm t -> types_compat (imm_type trm) t) args t_lst)
+      then Error "tcheck: tuple argument type mismatch"
+      else Ok typ
+    | _ -> Error "tcheck: Constructor type and constr_descr mismatch")
 ;;
 
 (** checks that given term has indicated type and holds invariants associated with it *)
@@ -86,39 +98,23 @@ let rec tcheck env term =
         lst;
       (typ, eff)
     | _ -> Test.fail_report "tcheck: ListTrm must have a list type")
-  | Constructor (typ, descr, _, eff) ->
-    let tcheck_variant term =
-      match check_option_invars term with
-      | Ok _ -> (typ, eff)
-      | Error e -> failwith e
-    in
-    let tcheck_tuple = function
-      | Constructor (typ, TupleArity i, args, eff) ->
-        (* "tuple" term invariants:
-          1) arity i must be equal to length of args
-          2) typ must be [Tuple lst], where [lst] lists types that are same as types of args
-        *)
-        (* check invar (1) *)
-        if not (List.length args = i) then failwith "tcheck: arity invariant failed";
-        (* check invar (2) *)
-        (match typ with
-        | Tuple t_lst ->
-          if not (List.for_all2 (fun trm t -> types_compat (imm_type trm) t) args t_lst)
-          then failwith "tcheck: type mismatch"
-        | _ -> failwith "tcheck: cannot be reached");
-        (typ, eff)
-      | _ -> invalid_arg "Effcheck.tcheck.tcheck_tuple"
-    in
-    (match descr with
-    | Variant _ -> tcheck_variant term
-    | TupleArity _ -> tcheck_tuple term)
+  (* typechecks variant constructors (currently checks only Option type but will be extended) *)
+  | Constructor (typ, Variant name, args, eff) ->
+    (match check_option_invars typ name args with
+    | Ok _ -> (typ, eff)
+    | Error e -> Test.fail_report e)
+  (* typechecks tuple constructors *)
+  | Constructor (typ, TupleArity i, args, eff) ->
+    (match check_tuple_invars typ i args with
+    | Ok _ -> (typ, eff)
+    | Error e -> Test.fail_report e)
   | PatternMatch (typ, matched_trm, cases, eff) ->
     let has_pat_type_mismatch pat =
       match pat with
       | PattVar _ -> false
       | PattConstr (typ, _, _) -> types_compat (imm_type matched_trm) typ
     in
-    let has_type_mismatch typ1 typ2 = if types_compat typ1 typ2 then false else true in
+    let has_type_mismatch typ1 typ2 = not (types_compat typ1 typ2) in
     let has_type_mismatch_lst =
       List.exists
         (fun (pat, body) ->
