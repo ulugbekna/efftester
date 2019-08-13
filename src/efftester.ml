@@ -197,6 +197,7 @@ let can_compile_test ~with_logging =
 let type_check_test =
   Test.make
     ~count:500
+    ~long_factor:10
     ~name:"generated term type checks"
     Arbitrary.arb_dep_term_with_cache
     (fun t_opt ->

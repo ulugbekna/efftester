@@ -109,6 +109,7 @@ let rec tcheck env term =
     | Ok _ -> (typ, eff)
     | Error e -> Test.fail_report e)
   | PatternMatch (typ, matched_trm, cases, eff) ->
+    tcheck env matched_trm |> ignore;
     let has_pat_type_mismatch pat =
       match pat with
       | PattVar _ -> false
