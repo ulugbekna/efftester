@@ -162,6 +162,11 @@ let imm_type t =
   | If (typ, _, _, _, _) -> typ
 ;;
 
+let imm_pat_type = function
+  | PattVar _ -> Typevar (newtypevar ())
+  | PattConstr (t, _, _) -> t
+;;
+
 let imm_eff t =
   match t with
   | Lit _ | Variable (_, _) | Lambda (_, _, _, _) -> no_eff
