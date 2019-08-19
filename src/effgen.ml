@@ -200,6 +200,32 @@ module StaticGenerators = struct
                   (recgen (n / 2)) )
             ])
   ;;
+
+  let all_type_gen =
+    (* Generates all types available in Efftester *)
+    Gen.fix (fun recgen n ->
+        let base_types = [ Unit; Int; Float; Bool; String ] in
+        if n = 0
+        then Gen.oneofl base_types
+        else
+          Gen.frequency
+            [ (* Generate no alphas *)
+              (4, Gen.oneofl base_types);
+              (1, Gen.map (fun t -> Option t) (recgen (sqrt n)));
+              (1, Gen.map (fun t -> Ref t) (recgen (sqrt n)));
+              ( 1,
+                Gen.map
+                  (fun tuple_lst -> Tuple tuple_lst)
+                  (Gen.small_list (recgen (sqrt n))) );
+              (1, Gen.map (fun t -> List t) (recgen (sqrt n)));
+              ( 1,
+                Gen.map3
+                  (fun t e t' -> Fun (t, e, t'))
+                  (recgen (n / 2))
+                  eff_gen
+                  (recgen (n / 2)) )
+            ])
+  ;;
 end
 
 (** {!Context} is used to store the state of generator for the program that is being
