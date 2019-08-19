@@ -108,23 +108,14 @@ let rec tcheck env term =
     (match check_tuple_invars typ i args with
     | Ok _ -> (typ, eff)
     | Error e -> Test.fail_report e)
-  | PatternMatch (typ, matched_trm, cases, eff) ->
+  | PatternMatch (ret_typ, matched_trm, cases, eff) ->
     tcheck env matched_trm |> ignore;
-    let has_pat_type_mismatch pat =
-      match pat with
-      | PattVar _ -> false
-      | PattConstr (typ, _, _) -> types_compat (imm_type matched_trm) typ
+    let is_patmatch_correct =
+      List.for_all (fun (_pat, body) -> types_compat (imm_type body) ret_typ) cases
     in
-    let has_type_mismatch typ1 typ2 = not (types_compat typ1 typ2) in
-    let has_type_mismatch_lst =
-      List.exists
-        (fun (pat, body) ->
-          has_type_mismatch (imm_type body) typ || has_pat_type_mismatch pat)
-        cases
-    in
-    if has_type_mismatch_lst
-    then Test.fail_report "tcheck: PatternMatch has a type mismatch"
-    else (typ, eff)
+    if is_patmatch_correct
+    then (ret_typ, eff)
+    else Test.fail_report "tcheck: PatternMatch has a type mismatch"
   | App (rt, m, at, n, ceff) ->
     let mtyp, meff = tcheck env m in
     let ntyp, neff = tcheck env n in
