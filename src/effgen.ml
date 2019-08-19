@@ -614,22 +614,23 @@ module GeneratorsWithContext (Ctx : Context) = struct
     in
     [ (3, gen) ]
 
-  and tuple_intro_rules env t eff size : (int * term GenOpt.t) list =
+  and tuple_intro_rules env t eff size =
     match t with
     | Tuple t_lst ->
-      let gen st : term option =
+      let gen st =
         let exception Short_circuit in
+        let arity = List.length t_lst in
+        let size' = size / arity in
         match
           List.map
             (fun t ->
-              match term_gen_sized env t eff size st with
+              match term_gen_sized env t eff size' st with
               | Some trm -> trm
               | None -> raise Short_circuit)
             t_lst
         with
         | exception Short_circuit -> None
-        | trm_lst ->
-          Some (Constructor (t, TupleArity (List.length trm_lst), trm_lst, eff))
+        | trm_lst -> Some (Constructor (t, TupleArity arity, trm_lst, eff))
       in
       [ (3, gen) ]
     | _ -> []
