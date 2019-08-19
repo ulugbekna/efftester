@@ -616,11 +616,12 @@ module GeneratorsWithContext (Ctx : Context) = struct
 
   and tuple_intro_rules env t eff size =
     match t with
+    | Tuple [] | Tuple [ _ ] -> failwith "tuple_intro_rules: tuple must have arity > 1"
     | Tuple t_lst ->
       let gen st =
+        let valid_tuple_arity = List.length t_lst in
+        let size' = size / valid_tuple_arity in
         let exception Short_circuit in
-        let arity = List.length t_lst in
-        let size' = size / arity in
         match
           List.map
             (fun t ->
@@ -630,7 +631,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
             t_lst
         with
         | exception Short_circuit -> None
-        | trm_lst -> Some (Constructor (t, TupleArity arity, trm_lst, eff))
+        | trm_lst -> Some (Constructor (t, TupleArity valid_tuple_arity, trm_lst, eff))
       in
       [ (3, gen) ]
     | _ -> []
