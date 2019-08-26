@@ -52,7 +52,7 @@ let check_option_invars typ name args =
       | [ payload ] ->
         if types_compat (imm_type payload) t
         then Ok typ
-        else Error "check_option_invariants: some payload type invariant failed"
+        else Error "check_option_invars: some payload type invariant failed"
       | _ -> Error "check_option_invars: some payload arity failed")
     | "None" ->
       (match args with
