@@ -659,6 +659,26 @@ module GeneratorsWithContext (Ctx : Context) = struct
       [ (3, gen) ]
     | _ -> []
 
+  and tuple_elim_rules env goal_t eff size =
+    let open Syntax in
+    (* generate a new tuple that is then pattern matched and [goal_t] term is returned *)
+    let elim_new_tuple_rule st =
+      let arity = Gen.(2 -- 10) st in
+      let size' = size / arity in
+      let pattern_match_gen =
+        Gen.list_size (return arity) (type_gen size') >>= fun types_lst ->
+        (* add [goal_t] to [types_lst] so that its term can be returned in future *)
+        Gen.shuffle_l (goal_t :: types_lst) >>= fun tuple_elt_types ->
+        term_gen_sized env (Tuple tuple_elt_types) eff size' >>=? fun tuple st ->
+        let pat, env = pattern_of_term env tuple st in
+        match term_gen_sized env goal_t eff (sqrt size) st with
+        | Some term -> Some (PatternMatch (goal_t, tuple, [ (pat, term) ], eff))
+        | None -> None
+      in
+      pattern_match_gen st
+    in
+    [ (1, elim_new_tuple_rule) ]
+
   and list_intro_rules env goal_typ eff size =
     let open Syntax in
     match goal_typ with
@@ -713,6 +733,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
           option_intro_rules;
           option_elim_rules;
           tuple_intro_rules;
+          tuple_elim_rules;
           list_intro_rules;
           (* var rule is covered by indir with no args *)
           app_rules;
