@@ -227,6 +227,28 @@ module StaticGenerators = struct
                   (recgen (n / 2)) )
             ])
   ;;
+
+  (* Auxiliary functions *)
+
+  (* a function that maps a term to a pattern following this rule:
+     tuples are mapped into a tuples, all other terms are mapped into variables *)
+  let pattern_of_term env term st =
+    (* keep track of variables using [env] because var names in a pattern must be unique *)
+    let env = ref env in
+    let rec to_pat term =
+      match term with
+      | Constructor (typ, TupleArity _, elts, _) ->
+        PattConstr (typ, "", List.map (fun elt -> to_pat elt) elts)
+      | other ->
+        let var = var_gen st in
+        (match lookup_var var !env with
+        | Some _ -> to_pat other
+        | None ->
+          env := add_var var (imm_type term) !env;
+          PattVar var)
+    in
+    (to_pat term, !env)
+  ;;
 end
 
 (** {!Context} is used to store the state of generator for the program that is being
