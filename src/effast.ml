@@ -129,7 +129,7 @@ type term =
   | Lit of lit
   | Variable of etype * variable
   | ListTrm of etype * term list * eff
-  (* [Constructor (type, descr, payload_lst)] is used to construct ADT variants *)
+  (* [Constructor (type, descr, payload_lst)] is used to construct ADT variants and tuples *)
   | Constructor of etype * constr_descr * term list * eff
   (* [PatternMatch typ matched_trm cases eff] *)
   | PatternMatch of etype * term * (pattern * term) list * eff
