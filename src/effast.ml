@@ -122,7 +122,7 @@ type constr_descr =
 (** type [pattern] is used to represent patterns in OCaml *)
 type pattern =
   | PattVar of variable
-  | PattConstr of etype * string * pattern list
+  | PattConstr of etype * constr_descr * pattern list
 
 (** type [term] is used to represent terms of OCaml available Efftester *)
 type term =

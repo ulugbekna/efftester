@@ -100,7 +100,12 @@ let pp_constructor_args ~one:pp_one ~several:pp_several ppf = function
 
 let pp_pattern ppf pat =
   let rec pp_pattern ppf = function
-    | PattConstr (_typ, name, patt_lst) ->
+    | PattConstr (_typ, constr_descr, patt_lst) ->
+      let name =
+        match constr_descr with
+        | TupleArity _ -> ""
+        | Variant name -> name
+      in
       Format.fprintf
         ppf
         "%s%a"

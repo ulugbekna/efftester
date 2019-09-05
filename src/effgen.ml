@@ -237,8 +237,8 @@ module StaticGenerators = struct
     let env = ref env in
     let rec to_pat term =
       match term with
-      | Constructor (typ, TupleArity _, elts, _) ->
-        PattConstr (typ, "", List.map (fun elt -> to_pat elt) elts)
+      | Constructor (typ, TupleArity a, elts, _) ->
+        PattConstr (typ, TupleArity a, List.map (fun elt -> to_pat elt) elts)
       | other ->
         let var = var_gen st in
         (match lookup_var var !env with
@@ -630,8 +630,8 @@ module GeneratorsWithContext (Ctx : Context) = struct
         (PatternMatch
            ( t,
              match_trm,
-             [ (PattConstr (bt, "Some", [ PattVar var_name ]), some_branch_trm);
-               (PattConstr (bt, "None", []), none_branch_trm)
+             [ (PattConstr (bt, Variant "Some", [ PattVar var_name ]), some_branch_trm);
+               (PattConstr (bt, Variant "None", []), none_branch_trm)
              ],
              eff ))
     in
