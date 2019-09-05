@@ -662,22 +662,16 @@ module GeneratorsWithContext (Ctx : Context) = struct
   and tuple_elim_rules env goal_t eff size =
     let open Syntax in
     (* generate a new tuple that is then pattern matched and [goal_t] term is returned *)
-    let elim_new_tuple_rule st =
-      let arity = Gen.(2 -- 10) st in
+    let pattern_match_gen =
+      Gen.(2 -- 10) >>= fun arity ->
       let size' = size / arity in
-      let pattern_match_gen =
-        Gen.list_size (return arity) (type_gen size') >>= fun types_lst ->
-        (* add [goal_t] to [types_lst] so that its term can be returned in future *)
-        Gen.shuffle_l (goal_t :: types_lst) >>= fun tuple_elt_types ->
-        term_gen_sized env (Tuple tuple_elt_types) eff size' >>=? fun tuple st ->
-        let pat, env = pattern_of_type env (imm_type tuple) st in
-        match term_gen_sized env goal_t eff (sqrt size) st with
-        | Some term -> Some (PatternMatch (goal_t, tuple, [ (pat, term) ], eff))
-        | None -> None
-      in
-      pattern_match_gen st
+      Gen.list_size (return arity) (type_gen size') >>= fun types_lst ->
+      term_gen_sized env (Tuple types_lst) eff size' >>=? fun tuple ->
+      pattern_of_type env (imm_type tuple) >>= fun (pat, env') ->
+      term_gen_sized env' goal_t eff (sqrt size) >>=? fun ret_term ->
+      return_opt (PatternMatch (goal_t, tuple, [ (pat, ret_term) ], eff))
     in
-    [ (1, elim_new_tuple_rule) ]
+    [ (1, pattern_match_gen) ]
 
   and list_intro_rules env goal_typ eff size =
     let open Syntax in
