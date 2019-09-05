@@ -105,8 +105,12 @@ let rec minimal_term ty =
   | Float -> Lit (LitFloat 0.)
   | Bool -> Lit (LitBool true)
   | String -> Lit (LitStr "")
-  | Option _ -> Constructor (ty, "None", [], no_eff)
+  | Option _ -> none ty
   | Ref t -> App (ty, Ref.ref_f, t, minimal_term t, (true, false))
+  | Tuple t_lst ->
+    let arity = List.length t_lst in
+    let elts = List.map minimal_term t_lst in
+    Constructor (ty, TupleArity arity, elts, no_eff)
   | List _ -> ListTrm (ty, [], no_eff)
   | Fun (input_t, _, output_t) ->
     let body = minimal_term output_t in

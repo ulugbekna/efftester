@@ -34,7 +34,7 @@ let tcheck_lit l =
   | LitStr _ -> (String, no_eff)
 ;;
 
-let check_opt_invariants (typ, name, payload_lst) =
+let check_option_invars typ name args =
   (* invariants:
     - typ must be Option _
     - name must be either "Some" or "None"
@@ -48,20 +48,36 @@ let check_opt_invariants (typ, name, payload_lst) =
   | Option t ->
     (match name with
     | "Some" ->
-      (match payload_lst with
+      (match args with
       | [ payload ] ->
         if types_compat (imm_type payload) t
         then Ok typ
-        else Error "check_opt_invariants: some payload type invariant failed"
-      | _ -> Error "check_opt_invariants: some payload arity failed")
+        else Error "check_option_invars: some payload type invariant failed"
+      | _ -> Error "check_option_invars: some payload arity failed")
     | "None" ->
-      (match payload_lst with
+      (match args with
       | [] -> Ok typ
-      | _ -> Error "check_opt_invariants: none payload arity failed")
-    | _ -> Error "check_opt_invariants: name invariant failed")
-  | _ -> Error "check_opt_invariants: option type invariant failed"
+      | _ -> Error "check_option_invars: none payload arity failed")
+    | _ -> Error "check_option_invars: name invariant failed")
+  | _ -> Error "check_option_invars: option type invariant failed"
 ;;
 
+let check_tuple_invars typ arity args =
+  (* check invar #1: arity i must be equal to length of args *)
+  if not (List.length args = arity)
+  then Error "tcheck: tuple arity invariant failed"
+  else (
+    (* check invar #2:
+       [typ] must be [Tuple lst], where [lst] lists types that are same as types of args *)
+    match typ with
+    | Tuple t_lst ->
+      if not (List.for_all2 (fun trm t -> types_compat (imm_type trm) t) args t_lst)
+      then Error "tcheck: tuple argument type mismatch"
+      else Ok typ
+    | _ -> Error "tcheck: Constructor type and constr_descr mismatch")
+;;
+
+(** checks that given term has indicated type and holds invariants associated with it *)
 let rec tcheck env term =
   match term with
   | Lit l -> tcheck_lit l
@@ -82,32 +98,24 @@ let rec tcheck env term =
         lst;
       (typ, eff)
     | _ -> Test.fail_report "tcheck: ListTrm must have a list type")
-  | Constructor (typ, name, payload_lst, eff) ->
-    (match check_opt_invariants (typ, name, payload_lst) with
-    | Ok _ ->
-      List.iter
-        (fun trm ->
-          (* ignore value but propatage error *)
-          tcheck env trm |> ignore)
-        payload_lst;
-      (typ, eff)
-    | Error msg -> Test.fail_report msg)
-  | PatternMatch (typ, matched_trm, cases, eff) ->
-    let has_pat_type_mismatch pat =
-      match pat with
-      | PattVar _ -> false
-      | PattConstr (typ, _, _) -> types_compat (imm_type matched_trm) typ
+  (* typechecks variant constructors (currently checks only Option type but will be extended) *)
+  | Constructor (typ, Variant name, args, eff) ->
+    (match check_option_invars typ name args with
+    | Ok _ -> (typ, eff)
+    | Error e -> Test.fail_report e)
+  (* typechecks tuple constructors *)
+  | Constructor (typ, TupleArity i, args, eff) ->
+    (match check_tuple_invars typ i args with
+    | Ok _ -> (typ, eff)
+    | Error e -> Test.fail_report e)
+  | PatternMatch (ret_typ, matched_trm, cases, eff) ->
+    tcheck env matched_trm |> ignore;
+    let is_patmatch_correct =
+      List.for_all (fun (_pat, body) -> types_compat (imm_type body) ret_typ) cases
     in
-    let has_type_mismatch typ1 typ2 = if types_compat typ1 typ2 then false else true in
-    let has_type_mismatch_lst =
-      List.exists
-        (fun (pat, body) ->
-          has_type_mismatch (imm_type body) typ || has_pat_type_mismatch pat)
-        cases
-    in
-    if has_type_mismatch_lst
-    then Test.fail_report "tcheck: PatternMatch has a type mismatch"
-    else (typ, eff)
+    if is_patmatch_correct
+    then (ret_typ, eff)
+    else Test.fail_report "tcheck: PatternMatch has a type mismatch"
   | App (rt, m, at, n, ceff) ->
     let mtyp, meff = tcheck env m in
     let ntyp, neff = tcheck env n in

@@ -78,7 +78,7 @@ let printer_by_etype typ =
     | Int -> ("print_int", lookup_var "print_int" init_tri_env)
     | Float -> ("print_float", lookup_var "print_float" init_tri_env)
     | String -> ("print_string", lookup_var "print_string" init_tri_env)
-    | Unit | Typevar _ | Option _ | Ref _ | List _ | Fun _ | Bool ->
+    | Unit | Typevar _ | Option _ | Ref _ | Tuple _ | List _ | Fun _ | Bool ->
       failwith
         "printer_by_etype: such base type should not be generated (not implemented)"
   in
@@ -197,6 +197,7 @@ let can_compile_test ~with_logging =
 let type_check_test =
   Test.make
     ~count:500
+    ~long_factor:10
     ~name:"generated term type checks"
     Arbitrary.arb_dep_term_with_cache
     (fun t_opt ->

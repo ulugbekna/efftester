@@ -26,7 +26,7 @@ let pp_tvar ppf a = Format.fprintf ppf "'a%d" a
 
 let pp_type ?(effannot = false) ppf etype =
   let rec pp_type ppf t =
-    let below = pp_param_type in
+    let below = pp_tuple_type in
     let rec self ppf = function
       | Fun (s, e, t) ->
         Format.fprintf
@@ -41,6 +41,16 @@ let pp_type ?(effannot = false) ppf etype =
       | other -> below ppf other
     in
     Format.fprintf ppf "@[<hv>%a@]" self t
+  and pp_tuple_type ppf t =
+    let below = pp_param_type in
+    match t with
+    | Tuple t_lst ->
+      Format.pp_print_list
+        ~pp_sep:(fun ppf () -> Format.fprintf ppf " * ")
+        below
+        ppf
+        t_lst
+    | other -> below ppf other
   and pp_param_type ppf t =
     let below = pp_simple_type in
     let rec self ppf = function
@@ -57,7 +67,7 @@ let pp_type ?(effannot = false) ppf etype =
     | Float -> Format.fprintf ppf "float"
     | Bool -> Format.fprintf ppf "bool"
     | String -> Format.fprintf ppf "string"
-    | (Fun _ | Option _ | Ref _ | List _) as non_simple ->
+    | (Fun _ | Option _ | Ref _ | Tuple _ | List _) as non_simple ->
       Format.fprintf ppf "@[<2>(%a)@]" pp_type non_simple
   in
   pp_type ppf etype
@@ -90,7 +100,12 @@ let pp_constructor_args ~one:pp_one ~several:pp_several ppf = function
 
 let pp_pattern ppf pat =
   let rec pp_pattern ppf = function
-    | PattConstr (_typ, name, patt_lst) ->
+    | PattConstr (_typ, constr_descr, patt_lst) ->
+      let name =
+        match constr_descr with
+        | TupleArity _ -> ""
+        | Variant name -> name
+      in
       Format.fprintf
         ppf
         "%s%a"
@@ -138,13 +153,21 @@ let pp_term ?(typeannot = true) ppf term =
       else Format.fprintf ppf "%s" x
     in
     match t with
-    | Constructor (_, name, args, _) ->
-      Format.fprintf
-        ppf
-        "@[<2>%s%a@]"
-        name
-        (pp_constructor_args ~one:pp_arg ~several:pp_app)
-        args
+    | Constructor (_, descr, args, _) ->
+      (match descr with
+      | Variant name ->
+        Format.fprintf
+          ppf
+          "@[<2>%s%a@]"
+          name
+          (pp_constructor_args ~one:pp_arg ~several:pp_app)
+          args
+      | TupleArity _ ->
+        Format.fprintf
+          ppf
+          "@[<2>%a@]"
+          (pp_constructor_args ~one:pp_arg ~several:pp_app)
+          args)
     | PatternMatch (_, match_trm, branches, _) ->
       let pp_case ppf (pattern, body) =
         Format.fprintf ppf "@;| @[<2>%a@ ->@ %a@]" pp_pattern pattern pp_arg body

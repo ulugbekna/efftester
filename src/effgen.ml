@@ -200,6 +200,55 @@ module StaticGenerators = struct
                   (recgen (n / 2)) )
             ])
   ;;
+
+  let all_type_gen =
+    (* Generates all types available in Efftester *)
+    Gen.fix (fun recgen n ->
+        let base_types = [ Unit; Int; Float; Bool; String ] in
+        if n = 0
+        then Gen.oneofl base_types
+        else
+          let open Gen in
+          frequency
+            [ (* Generate no alphas *)
+              (4, oneofl base_types);
+              (1, map (fun t -> Option t) (recgen (sqrt n)));
+              (1, map (fun t -> Ref t) (recgen (sqrt n)));
+              ( 1,
+                map
+                  (fun tuple_lst -> Tuple tuple_lst)
+                  (list_size (2 -- 10) (recgen (sqrt n))) );
+              (1, map (fun t -> List t) (recgen (sqrt n)));
+              ( 1,
+                map3
+                  (fun t e t' -> Fun (t, e, t'))
+                  (recgen (n / 2))
+                  eff_gen
+                  (recgen (n / 2)) )
+            ])
+  ;;
+
+  (* Auxiliary functions *)
+
+  (* a function that generates a pattern directed by the given type:
+     tuples are mapped into tuples, all other types are mapped into variables *)
+  let pattern_of_type env typ st =
+    (* keep track of variables using [env] because var names in a pattern must be unique *)
+    let env = ref env in
+    let rec to_pat = function
+      | Tuple elt_types ->
+        let arity = List.length elt_types in
+        PattConstr (typ, TupleArity arity, List.map to_pat elt_types)
+      | other ->
+        let var = var_gen st in
+        (match lookup_var var !env with
+        | Some _ -> to_pat other
+        | None ->
+          env := add_var var typ !env;
+          PattVar var)
+    in
+    (to_pat typ, !env)
+  ;;
 end
 
 (** {!Context} is used to store the state of generator for the program that is being
@@ -227,6 +276,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
     | String -> Gen.map (fun s -> LitStr s) string_gen
     | Option _ -> fail "option"
     | Ref _ -> fail "ref"
+    | Tuple _ -> fail "tuple"
     | List _ -> fail "list"
     | Typevar _ -> fail "typevar"
     | Fun _ -> fail "funtype"
@@ -242,16 +292,10 @@ module GeneratorsWithContext (Ctx : Context) = struct
        env |- l : s
 *)
   let lit_rules _env s eff size =
-    let rec list_of_fun = function
-      | List s -> list_of_fun s
-      | Fun _ -> true
-      | _ -> false
-    in
     match s with
-    | List s when list_of_fun s -> []
     | Unit | Int | Float | Bool | String ->
       [ (6, Gen.map (fun l -> Some (Lit l)) (literal_gen s eff size)) ]
-    | List _ | Option _ | Ref _ | Fun _ | Typevar _ -> []
+    | Tuple _ | List _ | Option _ | Ref _ | Fun _ | Typevar _ -> []
   ;;
 
   (* Sized generator of variables according to the VAR rule
@@ -300,7 +344,9 @@ module GeneratorsWithContext (Ctx : Context) = struct
       return_opt (Lambda (Fun (s, myeff, imm_type m), x, s, m))
     in
     match u with
-    | Unit | Int | Float | Bool | String | Option _ | Ref _ | List _ | Typevar _ -> []
+    | Unit | Int | Float | Bool | String | Option _ | Ref _ | Tuple _ | List _
+    | Typevar _ ->
+      []
     | Fun (s, e, t) -> [ (8, gen s e t) ]
 
   (* Sized generator of applications (calls) according to the APP rule
@@ -584,12 +630,48 @@ module GeneratorsWithContext (Ctx : Context) = struct
         (PatternMatch
            ( t,
              match_trm,
-             [ (PattConstr (bt, "Some", [ PattVar var_name ]), some_branch_trm);
-               (PattConstr (bt, "None", []), none_branch_trm)
+             [ (PattConstr (bt, Variant "Some", [ PattVar var_name ]), some_branch_trm);
+               (PattConstr (bt, Variant "None", []), none_branch_trm)
              ],
              eff ))
     in
     [ (3, gen) ]
+
+  and tuple_intro_rules env t eff size =
+    match t with
+    | Tuple [] | Tuple [ _ ] -> failwith "tuple_intro_rules: tuple must have arity > 1"
+    | Tuple t_lst ->
+      let gen st =
+        let valid_tuple_arity = List.length t_lst in
+        let size' = size / valid_tuple_arity in
+        let exception Short_circuit in
+        match
+          List.map
+            (fun t ->
+              match term_gen_sized env t eff size' st with
+              | Some trm -> trm
+              | None -> raise Short_circuit)
+            t_lst
+        with
+        | exception Short_circuit -> None
+        | trm_lst -> Some (Constructor (t, TupleArity valid_tuple_arity, trm_lst, eff))
+      in
+      [ (3, gen) ]
+    | _ -> []
+
+  and tuple_elim_rules env goal_t eff size =
+    let open Syntax in
+    (* generate a new tuple that is then pattern matched and [goal_t] term is returned *)
+    let pattern_match_gen =
+      Gen.(2 -- 10) >>= fun arity ->
+      let size' = size / arity in
+      Gen.list_size (return arity) (type_gen size') >>= fun types_lst ->
+      term_gen_sized env (Tuple types_lst) eff size' >>=? fun tuple ->
+      pattern_of_type env (imm_type tuple) >>= fun (pat, env') ->
+      term_gen_sized env' goal_t eff (sqrt size) >>=? fun ret_term ->
+      return_opt (PatternMatch (goal_t, tuple, [ (pat, ret_term) ], eff))
+    in
+    [ (1, pattern_match_gen) ]
 
   and list_intro_rules env goal_typ eff size =
     let open Syntax in
@@ -644,6 +726,8 @@ module GeneratorsWithContext (Ctx : Context) = struct
         [ lit_rules;
           option_intro_rules;
           option_elim_rules;
+          tuple_intro_rules;
+          tuple_elim_rules;
           list_intro_rules;
           (* var rule is covered by indir with no args *)
           app_rules;
