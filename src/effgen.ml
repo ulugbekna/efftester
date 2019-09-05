@@ -230,24 +230,24 @@ module StaticGenerators = struct
 
   (* Auxiliary functions *)
 
-  (* a function that maps a term to a pattern following this rule:
-     tuples are mapped into a tuples, all other terms are mapped into variables *)
-  let pattern_of_term env term st =
+  (* a function that generates a pattern directed by the given type:
+     tuples are mapped into tuples, all other types are mapped into variables *)
+  let pattern_of_type env typ st =
     (* keep track of variables using [env] because var names in a pattern must be unique *)
     let env = ref env in
-    let rec to_pat term =
-      match term with
-      | Constructor (typ, TupleArity a, elts, _) ->
-        PattConstr (typ, TupleArity a, List.map (fun elt -> to_pat elt) elts)
+    let rec to_pat = function
+      | Tuple elt_types ->
+        let arity = List.length elt_types in
+        PattConstr (typ, TupleArity arity, List.map to_pat elt_types)
       | other ->
         let var = var_gen st in
         (match lookup_var var !env with
         | Some _ -> to_pat other
         | None ->
-          env := add_var var (imm_type term) !env;
+          env := add_var var typ !env;
           PattVar var)
     in
-    (to_pat term, !env)
+    (to_pat typ, !env)
   ;;
 end
 
@@ -670,7 +670,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
         (* add [goal_t] to [types_lst] so that its term can be returned in future *)
         Gen.shuffle_l (goal_t :: types_lst) >>= fun tuple_elt_types ->
         term_gen_sized env (Tuple tuple_elt_types) eff size' >>=? fun tuple st ->
-        let pat, env = pattern_of_term env tuple st in
+        let pat, env = pattern_of_type env (imm_type tuple) st in
         match term_gen_sized env goal_t eff (sqrt size) st with
         | Some term -> Some (PatternMatch (goal_t, tuple, [ (pat, term) ], eff))
         | None -> None
