@@ -103,6 +103,7 @@ module Syntax = struct
   let fail = GenOpt.fail
   let ( >>= ) = Gen.( >>= )
   let ( >>=? ) = GenOpt.( >>= )
+  let ( >|= ) = Gen.( >|= )
 end
 
 (** Generators *)
@@ -124,6 +125,19 @@ module StaticGenerators = struct
   ;;
 
   let var_gen = Gen.map (String.make 1) alpha_gen
+
+  let fresh_var_gen domain =
+    let is_fresh x = not (VarSet.mem x domain) in
+    let open Syntax in
+    var_gen >|= fun var ->
+    if is_fresh var then var
+    else
+      let rec loop i =
+        let var' = Printf.sprintf "%s_%d" var i in
+        if is_fresh var' then var'
+        else loop (i + 1)
+      in loop 1
+
   let string_gen = Gen.small_string ~gen:alpha_gen
   let str_to_str = Printf.sprintf "%S"
   let sqrt i = int_of_float (Pervasives.sqrt (float_of_int i))
@@ -233,19 +247,23 @@ module StaticGenerators = struct
   (* a function that generates a pattern directed by the given type:
      tuples are mapped into tuples, all other types are mapped into variables *)
   let pattern_of_type env typ st =
-    (* keep track of variables using [env] because var names in a pattern must be unique *)
+    let fresh_pat_var =
+      (* keep track of already-generated variables
+         because var names in a pattern must be unique *)
+      let pat_vars = ref VarSet.empty in
+      fun () ->
+        let pat_var = fresh_var_gen !pat_vars st in
+        pat_vars := VarSet.add pat_var !pat_vars;
+        pat_var in
     let env = ref env in
     let rec to_pat = function
       | Tuple elt_types ->
         let arity = List.length elt_types in
         PattConstr (typ, TupleArity arity, List.map to_pat elt_types)
       | other ->
-        let var = var_gen st in
-        (match lookup_var var !env with
-        | Some _ -> to_pat other
-        | None ->
-          env := add_var var typ !env;
-          PattVar (other, var))
+        let var = fresh_pat_var () in
+        env := add_var var other !env;
+        PattVar (other, var)
     in
     let pat = to_pat typ in
     (pat, !env)
