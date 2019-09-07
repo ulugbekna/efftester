@@ -77,6 +77,63 @@ let check_tuple_invars typ arity args =
     | _ -> Error "tcheck: Constructor type and constr_descr mismatch")
 ;;
 
+(** checks that a given pattern is well-typed, and returns the
+   scrutinee type and well-typed environment returned by that pattern *)
+let rec pcheck = function
+  | PattVar (ty, x) -> VarMap.singleton x ty
+  | PattConstr (ty, cstr, ps) ->
+     let disjoint_union env1 env2 =
+       VarMap.merge (fun x o1 o2 ->
+           match o1, o2 with
+             | None, None -> None
+             | Some ty, None | None, Some ty -> Some ty
+             | Some _, Some _ ->
+                Test.fail_reportf
+                  "pcheck: the variable %s occurs more than once" x)
+       env1 env2 in
+     let pcheck_args tys args =
+       if List.length tys <> List.length args
+       then Test.fail_report "pcheck: arity mismatch";
+       List.fold_left2 (fun env ty p ->
+           let p_ty = imm_pat_type p in
+           if not (types_compat ty p_ty)
+           (* Note: this check is in the opposite direction
+              than the check on terms: in a constructedterm
+              `K(e)`, the immediate type of `e` may be "less"
+              (less effectful, less general) than the type expected by K;
+              for patterns it is the converse, if the constructor
+              K expects a sub-pattern at a given type, then the actual
+              type of the sub-pattern cannot be less general (it would
+              miss some possible scrutinees), it should be more general.
+
+              For example if (x, y) claims to match on values of type
+              ((a -{pure}-> b) * c), it is fine if the pattern variable x
+              accepts the more general type (a -{impure}-> b) -- the typing
+              environment will be populated with this less precise type.
+              On the other hand, it would be unsound for (x, y) to claim to match
+              on ((a -{impure}-> b) * c) and yet populate the environment with
+              (x : (a -{pure}-> b)). *)
+           then Test.fail_report "pcheck: inner pattern mismatch";
+           disjoint_union env (pcheck p))
+         VarMap.empty tys args
+     in
+     begin match cstr, ty with
+       | TupleArity n, Tuple tys ->
+          if not (List.length tys = n)
+          then Test.fail_report "pcheck: tuple arity mismatch";
+          pcheck_args tys ps
+       | TupleArity _, _ ->
+          Test.fail_report "pcheck: tuple constructor at non-tuple type";
+       | Variant "None", Option _t ->
+          pcheck_args [] ps
+       | Variant "Some", Option t ->
+          pcheck_args [t] ps
+       | Variant (("Some" | "None") as cstr), _ ->
+          Test.fail_reportf "pcheck: %s must have type option" cstr
+       | Variant cstr, _ ->
+          Test.fail_reportf "pcheck: unknown variant constructor %S" cstr
+     end
+
 (** checks that given term has indicated type and holds invariants associated with it *)
 let rec tcheck env term =
   match term with
@@ -110,12 +167,14 @@ let rec tcheck env term =
     | Error e -> Test.fail_report e)
   | PatternMatch (ret_typ, matched_trm, cases, eff) ->
     tcheck env matched_trm |> ignore;
-    let is_patmatch_correct =
-      List.for_all (fun (_pat, body) -> types_compat (imm_type body) ret_typ) cases
+    let check_case (pat, body) =
+      let body_env = VarMap.union (fun _ _ t -> Some t) env (pcheck pat) in
+      let body_typ, body_eff = tcheck body_env body in
+      if not (types_compat body_typ ret_typ && eff_leq body_eff eff)
+      then Test.fail_report "tcheck: PatternMatch has a type mismatch";
     in
-    if is_patmatch_correct
-    then (ret_typ, eff)
-    else Test.fail_report "tcheck: PatternMatch has a type mismatch"
+    List.iter check_case cases;
+    (ret_typ, eff)
   | App (rt, m, at, n, ceff) ->
     let mtyp, meff = tcheck env m in
     let ntyp, neff = tcheck env n in

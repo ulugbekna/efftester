@@ -257,9 +257,10 @@ module StaticGenerators = struct
         pat_var in
     let env = ref env in
     let rec to_pat = function
-      | Tuple elt_types ->
+      | Tuple elt_types as tuple_typ ->
         let arity = List.length elt_types in
-        PattConstr (typ, TupleArity arity, List.map to_pat elt_types)
+        let pats = List.map to_pat elt_types in
+        PattConstr (tuple_typ, TupleArity arity, pats)
       | other ->
         let var = fresh_pat_var () in
         env := add_var var other !env;
@@ -640,7 +641,8 @@ module GeneratorsWithContext (Ctx : Context) = struct
     let gen =
       let open Syntax in
       StaticGenerators.basetype_gen >>= fun bt ->
-      term_gen_sized env (Option bt) eff (size / 3) >>=? fun match_trm ->
+      let ot = Option bt in
+      term_gen_sized env ot eff (size / 3) >>=? fun match_trm ->
       var_gen >>= fun var_name ->
       let extended_env = add_var var_name bt env in
       term_gen_sized extended_env t eff (size / 3) >>=? fun some_branch_trm ->
@@ -649,9 +651,9 @@ module GeneratorsWithContext (Ctx : Context) = struct
         (PatternMatch
            ( t,
              match_trm,
-             [ (PattConstr (bt, Variant "Some", [ PattVar (bt, var_name) ]),
+             [ (PattConstr (ot, Variant "Some", [ PattVar (bt, var_name) ]),
                 some_branch_trm);
-               (PattConstr (bt, Variant "None", []),
+               (PattConstr (ot, Variant "None", []),
                 none_branch_trm)
              ],
              eff ))
