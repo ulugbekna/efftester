@@ -247,7 +247,8 @@ module StaticGenerators = struct
           env := add_var var typ !env;
           PattVar (other, var))
     in
-    (to_pat typ, !env)
+    let pat = to_pat typ in
+    (pat, !env)
   ;;
 end
 
