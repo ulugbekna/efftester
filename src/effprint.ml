@@ -114,7 +114,7 @@ let pp_pattern ppf pat =
         patt_lst
     | PattVar _ as simple -> pp_simple_pattern ppf simple
   and pp_simple_pattern ppf = function
-    | PattVar v -> pp_var ppf v
+    | PattVar (_typ, v) -> pp_var ppf v
     | non_simple -> Format.fprintf ppf "(%a)" pp_pattern non_simple
   in
   pp_pattern ppf pat

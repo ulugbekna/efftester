@@ -245,7 +245,7 @@ module StaticGenerators = struct
         | Some _ -> to_pat other
         | None ->
           env := add_var var typ !env;
-          PattVar var)
+          PattVar (other, var))
     in
     (to_pat typ, !env)
   ;;
@@ -630,8 +630,10 @@ module GeneratorsWithContext (Ctx : Context) = struct
         (PatternMatch
            ( t,
              match_trm,
-             [ (PattConstr (bt, Variant "Some", [ PattVar var_name ]), some_branch_trm);
-               (PattConstr (bt, Variant "None", []), none_branch_trm)
+             [ (PattConstr (bt, Variant "Some", [ PattVar (bt, var_name) ]),
+                some_branch_trm);
+               (PattConstr (bt, Variant "None", []),
+                none_branch_trm)
              ],
              eff ))
     in
