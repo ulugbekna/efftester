@@ -129,7 +129,7 @@ module Arbitrary = struct
   let arb_dep_term_with_cache =
     make
       ~print:
-        (let printer (_typ, trm) = str_of_pp (pp_term ~typeannot:false) trm in
+        (let printer (_typ, trm) = str_of_pp (pp_term ~typeannot:true) trm in
          Print.option printer)
       ~shrink:Effshrink.wrapped_dep_term_shrinker
       (fun rs ->
@@ -187,7 +187,7 @@ let can_compile_test ~with_logging =
         false
       | Some (_typ, trm) ->
         (try
-           let generated_prgm = str_of_pp pp_term trm in
+           let generated_prgm = str_of_pp (pp_term ~typeannot:false) trm in
            logger "%s" generated_prgm;
            write_prog generated_prgm prgm_filename;
            0 = Sys.command ("ocamlc -w -5@20-26 " ^ prgm_filename)
@@ -223,7 +223,9 @@ let int_eq_test =
       ==>
       match topt with
       | None -> false
-      | Some t -> is_native_byte_equiv (str_of_pp pp_term (print_wrap t)))
+      | Some t ->
+         is_native_byte_equiv
+           (str_of_pp (pp_term ~typeannot:false) (print_wrap t)))
 ;;
 
 let rand_eq_test typ =
@@ -237,7 +239,9 @@ let rand_eq_test typ =
       ==>
       match topt with
       | None -> false
-      | Some t -> is_native_byte_equiv (str_of_pp pp_term (rand_print_wrap typ t)))
+      | Some t ->
+         is_native_byte_equiv
+           (str_of_pp (pp_term ~typeannot:false) (rand_print_wrap typ t)))
 ;;
 
 let dep_eq_test ~with_logging =
@@ -258,7 +262,9 @@ let dep_eq_test ~with_logging =
         logger "%s" "failwith(\"dep_t_opt = None\")";
         false
       | Some (typ, trm) ->
-        let generated_prgm = rand_print_wrap typ trm |> str_of_pp pp_term in
+        let generated_prgm =
+          rand_print_wrap typ trm
+          |> str_of_pp (pp_term ~typeannot:false) in
         logger "%s" generated_prgm;
         is_native_byte_equiv generated_prgm)
 ;;

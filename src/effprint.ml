@@ -98,7 +98,7 @@ let pp_constructor_args ~one:pp_one ~several:pp_several ppf = function
       arg_list
 ;;
 
-let pp_pattern ppf pat =
+let pp_pattern ~typeannot ppf pat =
   let rec pp_pattern ppf = function
     | PattConstr (_typ, constr_descr, patt_lst) ->
       let name =
@@ -114,7 +114,12 @@ let pp_pattern ppf pat =
         patt_lst
     | PattVar _ as simple -> pp_simple_pattern ppf simple
   and pp_simple_pattern ppf = function
-    | PattVar (_typ, v) -> pp_var ppf v
+    | PattVar (typ, v) ->
+       if not typeannot
+       then pp_var ppf v
+       else Format.fprintf ppf "(%a : %a)"
+              pp_var v
+              (pp_type ~effannot:false) typ
     | non_simple -> Format.fprintf ppf "(%a)" pp_pattern non_simple
   in
   pp_pattern ppf pat
@@ -145,7 +150,7 @@ let pp_pattern ppf pat =
    The following prettyprinter is structured according to this grammar to cut down on
    the needless parentheses
 *)
-let pp_term ?(typeannot = true) ppf term =
+let pp_term ~typeannot ppf term =
   let rec pp_exp ppf t =
     let pp_binder ppf (x, t) =
       if typeannot
@@ -170,7 +175,9 @@ let pp_term ?(typeannot = true) ppf term =
           args)
     | PatternMatch (_, match_trm, branches, _) ->
       let pp_case ppf (pattern, body) =
-        Format.fprintf ppf "@;| @[<2>%a@ ->@ %a@]" pp_pattern pattern pp_arg body
+        Format.fprintf ppf "@;| @[<2>%a@ ->@ %a@]"
+          (pp_pattern ~typeannot) pattern
+          pp_arg body
         (* we use pp_arg to ensure that inner 'match' expressions get parenthesized,
            to avoid incorrect-precedence cases such as
              match x with
