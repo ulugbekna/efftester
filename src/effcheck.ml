@@ -260,60 +260,48 @@ let rec tcheck env term =
         t
   | If (t, b, m, n, e) ->
     let btyp, beff = tcheck env b in
-    if btyp = Bool
-    then
-      if eff_leq beff e
-      then (
-        let mtyp, meff = tcheck env m in
-        let ntyp, neff = tcheck env n in
-        match unify mtyp ntyp with
-        | Sol sub ->
-          if types_compat (subst sub mtyp) t
-             (* we obtain annot by instantiating inferred type *)
-          then
-            if types_compat (subst sub ntyp) t
-               (* we obtain annot by instantiating inferred type *)
-            then
-              if eff_leq meff e && eff_leq neff e
-              then (
-                let e' = eff_join beff (eff_join meff neff) in
-                (t, e'))
-              else
-                Test.fail_report "tcheck: If's branch effects disagree with annotation"
-            else
-              Test.fail_reportf
-                ("tcheck: If's else branch type disagrees with annotation;@;"
-                ^^ "@[<v>term is %a,@ ntyp is %a,@ (subst sub ntyp) is %a,@ t is %a@]")
-                (pp_term ~typeannot:false)
-                term
-                (pp_type ~effannot:true)
-                ntyp
-                (pp_type ~effannot:true)
-                (subst sub ntyp)
-                (pp_type ~effannot:true)
-                t
-          else
-            Test.fail_reportf
-              ("tcheck: If's then branch type disagrees with annotation:@;"
-              ^^ "@[<v>term is %a,@ mtyp is %a,@ (subst sub mtyp) is %a,@ t is %a@]")
-              (pp_term ~typeannot:false)
-              term
-              (pp_type ~effannot:true)
-              mtyp
-              (pp_type ~effannot:true)
-              (subst sub mtyp)
-              (pp_type ~effannot:true)
-              t
+    if btyp <> Bool then
+      Test.fail_report "tcheck: If with non-Boolean condition";
+    if not (eff_leq beff e) then
+      Test.fail_report "tcheck: If's condition effect disagrees with annotation";
+    let mtyp, meff = tcheck env m in
+    let ntyp, neff = tcheck env n in
+    let mtyp, ntyp = match unify mtyp ntyp with
         | No_sol ->
-          Test.fail_reportf
-            ("tcheck: If's branch types do not unify:@;"
-            ^^ "@[<v>term is %a,@ mtyp is %a,@ ntyp is %a@]")
-            (pp_term ~typeannot:false)
-            term
-            (pp_type ~effannot:true)
-            mtyp
-            (pp_type ~effannot:true)
-            ntyp)
-      else Test.fail_report "tcheck: If's condition effect disagrees with annotation"
-    else Test.fail_report "tcheck: If with non-Boolean condition"
+           Test.fail_reportf
+             ("tcheck: If's branch types do not unify:@;"
+              ^^ "@[<v>term is %a,@ mtyp is %a,@ ntyp is %a@]")
+             (pp_term ~typeannot:false)
+             term
+             (pp_type ~effannot:true)
+             mtyp
+             (pp_type ~effannot:true)
+             ntyp
+        | Sol sub ->
+           subst sub mtyp, subst sub ntyp
+    in
+    if not (types_compat mtyp t) then
+      Test.fail_reportf
+        ("tcheck: If's then branch type disagrees with annotation:@;"
+        ^^ "@[<v>term is %a,@ (subst sub mtyp) is %a,@ t is %a@]")
+        (pp_term ~typeannot:false)
+        term
+        (pp_type ~effannot:true)
+        mtyp
+        (pp_type ~effannot:true)
+        t;
+    if not (types_compat ntyp t) then
+      Test.fail_reportf
+        ("tcheck: If's else branch type disagrees with annotation;@;"
+         ^^ "@[<v>term is %a,@ (subst sub ntyp) is %a,@ t is %a@]")
+        (pp_term ~typeannot:false)
+        term
+        (pp_type ~effannot:true)
+        ntyp
+        (pp_type ~effannot:true)
+        t;
+    if not (eff_leq meff e && eff_leq neff e) then
+      Test.fail_report "tcheck: If's branch effects disagree with annotation";
+    let e' = eff_join beff (eff_join meff neff) in
+    (t, e')
 ;;
