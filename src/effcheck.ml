@@ -161,67 +161,66 @@ let rec tcheck env term =
   | App (rt, m, at, n, ceff) ->
     let mtyp, meff = tcheck env m in
     let ntyp, neff = tcheck env n in
-    (match mtyp with
-    | Fun (_, e, _) ->
-      if meff = no_eff || neff = no_eff
-      then (
-        match unify mtyp (Fun (at, ceff, rt)) with
-        | Sol sub ->
-          if types_compat (subst sub mtyp) (Fun (at, ceff, rt))
-             (* we obtain annot by instantiating inferred type *)
-          then (
-            match unify ntyp at with
-            | Sol sub' ->
-              if types_compat (subst sub' ntyp) at
-                 (* we obtain annot by instantiating inferred type *)
-              then (
-                let j_eff = eff_join e (eff_join meff neff) in
-                if eff_leq j_eff ceff
-                then (rt, j_eff)
-                else
-                  Test.fail_reportf
-                    ("tcheck: effect annotation disagree in application:@;"
-                    ^^ "@[<v>ceff is %a,@ j_eff is %a@]")
-                    pp_eff
-                    ceff
-                    pp_eff
-                    j_eff)
-              else
-                Test.fail_reportf
-                  ("tcheck: argument types disagree in application:@;"
-                  ^^ "@[<v>ntyp is %a,@ at is %a@]")
-                  (pp_type ~effannot:true)
-                  ntyp
-                  (pp_type ~effannot:true)
-                  at
-            | No_sol ->
-              Test.fail_reportf
-                ("tcheck: argument types do not unify in application:@;"
-                ^^ "@[<v>ntyp is %a,@ at is %a@]")
-                (pp_type ~effannot:true)
-                ntyp
-                (pp_type ~effannot:true)
-                at)
-          else
-            Test.fail_reportf
-              ("tcheck: function types disagree in application:@;"
-              ^^ "@[<v>sub is %a,@ mtyp is %a,@ (Fun (at,ceff,rt)) is %a@]")
-              (pp_solution ~effannot:true)
-              sub
-              (pp_type ~effannot:true)
-              mtyp
-              (pp_type ~effannot:true)
-              (Fun (at, ceff, rt))
+    let fun_eff = match mtyp with
+        | Fun (_, eff, _) -> eff
+        | _ ->
+           Test.fail_report "tcheck: application of non-function type"
+    in
+    if not (List.mem no_eff [meff; neff])
+    then Test.fail_report "tcheck: application has subexprs with eff";
+    let msub, mtyp =
+      match unify mtyp (Fun (at, ceff, rt)) with
         | No_sol ->
-          Test.fail_reportf
-            ("tcheck: function types do not unify in application:@;"
-            ^^ "@[<v>mtyp is %a,@ (Fun (at,ceff,rt)) is %a@]")
-            (pp_type ~effannot:true)
-            mtyp
-            (pp_type ~effannot:true)
-            (Fun (at, ceff, rt)))
-      else Test.fail_report "tcheck: application has subexprs with eff"
-    | _ -> Test.fail_report "tcheck: application of non-function type")
+           Test.fail_reportf
+             ("tcheck: function types do not unify in application:@;"
+              ^^ "@[<v>mtyp is %a,@ (Fun (at,ceff,rt)) is %a@]")
+             (pp_type ~effannot:true)
+             mtyp
+             (pp_type ~effannot:true)
+             (Fun (at, ceff, rt))
+        | Sol sub ->
+           sub, subst sub mtyp in
+    let _nsub, ntyp =
+      match unify ntyp at with
+        | No_sol ->
+           Test.fail_reportf
+             ("tcheck: argument types do not unify in application:@;"
+              ^^ "@[<v>ntyp is %a,@ at is %a@]")
+             (pp_type ~effannot:true)
+             ntyp
+             (pp_type ~effannot:true)
+             at
+        | Sol sub ->
+           sub, subst sub ntyp
+    in
+    if not (types_compat mtyp (Fun (at, ceff, rt))) then
+      Test.fail_reportf
+        ("tcheck: function types disagree in application:@;"
+         ^^ "@[<v>sub is %a,@ mtyp is %a,@ (Fun (at,ceff,rt)) is %a@]")
+        (pp_solution ~effannot:true)
+        msub
+        (pp_type ~effannot:true)
+        mtyp
+        (pp_type ~effannot:true)
+        (Fun (at, ceff, rt));
+    if not (types_compat ntyp at) then
+      Test.fail_reportf
+        ("tcheck: argument types disagree in application:@;"
+         ^^ "@[<v>ntyp is %a,@ at is %a@]")
+        (pp_type ~effannot:true)
+        ntyp
+        (pp_type ~effannot:true)
+        at;
+    let j_eff = eff_join fun_eff (eff_join meff neff) in
+    if not (eff_leq j_eff ceff) then
+      Test.fail_reportf
+        ("tcheck: effect annotation disagree in application:@;"
+         ^^ "@[<v>ceff is %a,@ j_eff is %a@]")
+        pp_eff
+        ceff
+        pp_eff
+        j_eff;
+    (rt, j_eff)
   | Let (x, t, m, n, ltyp, leff) ->
     let mtyp, meff = tcheck env m in
     let ntyp, neff = tcheck (VarMap.add x mtyp env) n in
