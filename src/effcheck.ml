@@ -92,7 +92,19 @@ let rec pcheck = function
      end
 
 (** checks that given term has indicated type and holds invariants associated with it *)
-let rec tcheck env term =
+let compat_sig (ty1, eff1) (ty2, eff2) =
+  types_compat ty1 ty2 && eff_leq eff1 eff2
+
+let assert_compat explanation sig1 sig2 =
+  if compat_sig sig1 sig2
+  then ()
+  else Test.fail_reportf "effcheck: signature mismatch in %s" explanation
+
+let rec tcheck_compat env term explanation expected_sig =
+  let term_sig = tcheck env term in
+  assert_compat explanation term_sig expected_sig
+
+and tcheck env term =
   match term with
   | Lit l -> tcheck_lit l
   | Variable (t, v) ->
@@ -110,21 +122,17 @@ let rec tcheck env term =
          | List et -> et
          | _ -> Test.fail_report "tcheck: ListTrm must have a list type"
      in
-     List.iter (fun e ->
-         let (e_ty, e_eff) = tcheck env e in
-         if not (types_compat e_ty elem_typ && eff_leq e_eff eff) then
-           Test.fail_report "tcheck: type mismatch in list element";
-       ) lst;
+     List.iter
+       (fun e -> tcheck_compat env e "list element" (elem_typ, eff))
+       lst;
      (typ, eff)
   | Constructor (typ, cstr, args, eff) ->
      let check_args tys args =
        if List.length tys <> List.length args
        then Test.fail_report "tcheck: arity mismatch";
-       List.iter2 (fun ty e ->
-         let (e_ty, e_eff) = tcheck env e in
-         if not (types_compat e_ty ty && eff_leq e_eff eff) then
-           Test.fail_report "tcheck: type mismatch in constructor argument";
-         ) tys args
+       List.iter2
+         (fun ty e -> tcheck_compat env e "constructor argument" (ty, eff))
+         tys args
      in
      begin match typ with
        | Tuple tys ->
@@ -152,9 +160,7 @@ let rec tcheck env term =
     tcheck env matched_trm |> ignore;
     let check_case (pat, body) =
       let body_env = VarMap.union (fun _ _ t -> Some t) env (pcheck pat) in
-      let body_typ, body_eff = tcheck body_env body in
-      if not (types_compat body_typ ret_typ && eff_leq body_eff eff)
-      then Test.fail_report "tcheck: PatternMatch has a type mismatch";
+      tcheck_compat body_env body "right-hand-side" (ret_typ, eff)
     in
     List.iter check_case cases;
     (ret_typ, eff)
@@ -260,10 +266,7 @@ let rec tcheck env term =
         t
   | If (t, b, m, n, e) ->
     let btyp, beff = tcheck env b in
-    if btyp <> Bool then
-      Test.fail_report "tcheck: If with non-Boolean condition";
-    if not (eff_leq beff e) then
-      Test.fail_report "tcheck: If's condition effect disagrees with annotation";
+    assert_compat "boolean condition" (btyp, beff) (Bool, e);
     let mtyp, meff = tcheck env m in
     let ntyp, neff = tcheck env n in
     let mtyp, ntyp = match unify mtyp ntyp with
@@ -280,28 +283,8 @@ let rec tcheck env term =
         | Sol sub ->
            subst sub mtyp, subst sub ntyp
     in
-    if not (types_compat mtyp t) then
-      Test.fail_reportf
-        ("tcheck: If's then branch type disagrees with annotation:@;"
-        ^^ "@[<v>term is %a,@ (subst sub mtyp) is %a,@ t is %a@]")
-        (pp_term ~typeannot:false)
-        term
-        (pp_type ~effannot:true)
-        mtyp
-        (pp_type ~effannot:true)
-        t;
-    if not (types_compat ntyp t) then
-      Test.fail_reportf
-        ("tcheck: If's else branch type disagrees with annotation;@;"
-         ^^ "@[<v>term is %a,@ (subst sub ntyp) is %a,@ t is %a@]")
-        (pp_term ~typeannot:false)
-        term
-        (pp_type ~effannot:true)
-        ntyp
-        (pp_type ~effannot:true)
-        t;
-    if not (eff_leq meff e && eff_leq neff e) then
-      Test.fail_report "tcheck: If's branch effects disagree with annotation";
+    assert_compat "the then branch" (mtyp, meff) (t, e);
+    assert_compat "the else branch" (ntyp, neff) (t, e);
     let e' = eff_join beff (eff_join meff neff) in
     (t, e')
 ;;
