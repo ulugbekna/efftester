@@ -224,31 +224,27 @@ let rec tcheck env term =
   | Let (x, t, m, n, ltyp, leff) ->
     let mtyp, meff = tcheck env m in
     let ntyp, neff = tcheck (VarMap.add x mtyp env) n in
-    if types_compat mtyp t (* annotation may be more concrete then inferred type *)
-    then
-      (*  annot "int list" instead of the more general "'a list" *)
-      if types_compat ntyp ltyp
-      then (
-        let j_eff = eff_join meff neff in
-        if eff_leq j_eff leff
-        then (ntyp, leff)
-        else
-          Test.fail_reportf
-            ("tcheck: let-effect disagrees with annotation:@;"
-            ^^ "@[<v>leff is %a,@ j_eff is %a@]")
-            pp_eff
-            leff
-            pp_eff
-            j_eff)
-      else
-        Test.fail_reportf
-          ("tcheck: let-body's type disagrees with annotation:@;"
-          ^^ "@[<v>ntyp is %a, ltyp is %a@]")
-          (pp_type ~effannot:true)
-          ntyp
-          (pp_type ~effannot:true)
-          ltyp
-    else Test.fail_report "tcheck: let-bound type disagrees with annotation"
+    if not (types_compat mtyp t) then
+      Test.fail_report "tcheck: let-bound type disagrees with annotation";
+    (*  annot "int list" instead of the more general "'a list" *)
+    if not (types_compat ntyp ltyp) then
+      Test.fail_reportf
+        ("tcheck: let-body's type disagrees with annotation:@;"
+        ^^ "@[<v>ntyp is %a, ltyp is %a@]")
+        (pp_type ~effannot:true)
+        ntyp
+        (pp_type ~effannot:true)
+        ltyp;
+    let j_eff = eff_join meff neff in
+    if not (eff_leq j_eff leff) then
+      Test.fail_reportf
+        ("tcheck: let-effect disagrees with annotation:@;"
+        ^^ "@[<v>leff is %a,@ j_eff is %a@]")
+        pp_eff
+        leff
+        pp_eff
+        j_eff;
+    (ntyp, leff)
   | Lambda (t, x, s, m) ->
     let mtyp, meff = tcheck (VarMap.add x s env) m in
     let ftyp = Fun (s, meff, mtyp) in
