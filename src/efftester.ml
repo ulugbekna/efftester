@@ -187,7 +187,17 @@ let can_compile_test ~with_logging =
         false
       | Some (_typ, trm) ->
         (try
-           let generated_prgm = str_of_pp (pp_term ~typeannot:false) trm in
+           (* passing ~typeannot:true here is necessary to silence
+              warning 20 (this argument will never be used by the function)
+              for code such as
+
+                match List.hd with
+                | None -> ()
+                | Some (x : unit -> unit) -> x ()
+
+              without the type annotation on the binding occurrence of x,
+              the warning would be emitted. *)
+           let generated_prgm = str_of_pp (pp_term ~typeannot:true) trm in
            logger "%s" generated_prgm;
            write_prog generated_prgm prgm_filename;
            0 = Sys.command ("ocamlc -w -5@20-26 " ^ prgm_filename)
