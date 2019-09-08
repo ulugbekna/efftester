@@ -34,49 +34,6 @@ let tcheck_lit l =
   | LitStr _ -> (String, no_eff)
 ;;
 
-let check_option_invars typ name args =
-  (* invariants:
-    - typ must be Option _
-    - name must be either "Some" or "None"
-    - match name with
-      | "Some" -> payload list must be a list of one element &&
-        unwrapped type t of option must be same as (imm_type payload)
-      | "None" -> payload list must be an empty list
-      | _ -> "option adt name invariant failed"
-   *)
-  match typ with
-  | Option t ->
-    (match name with
-    | "Some" ->
-      (match args with
-      | [ payload ] ->
-        if types_compat (imm_type payload) t
-        then Ok typ
-        else Error "check_option_invars: some payload type invariant failed"
-      | _ -> Error "check_option_invars: some payload arity failed")
-    | "None" ->
-      (match args with
-      | [] -> Ok typ
-      | _ -> Error "check_option_invars: none payload arity failed")
-    | _ -> Error "check_option_invars: name invariant failed")
-  | _ -> Error "check_option_invars: option type invariant failed"
-;;
-
-let check_tuple_invars typ arity args =
-  (* check invar #1: arity i must be equal to length of args *)
-  if not (List.length args = arity)
-  then Error "tcheck: tuple arity invariant failed"
-  else (
-    (* check invar #2:
-       [typ] must be [Tuple lst], where [lst] lists types that are same as types of args *)
-    match typ with
-    | Tuple t_lst ->
-      if not (List.for_all2 (fun trm t -> types_compat (imm_type trm) t) args t_lst)
-      then Error "tcheck: tuple argument type mismatch"
-      else Ok typ
-    | _ -> Error "tcheck: Constructor type and constr_descr mismatch")
-;;
-
 (** checks that a given pattern is well-typed, and returns the
    scrutinee type and well-typed environment returned by that pattern *)
 let rec pcheck = function
@@ -139,32 +96,58 @@ let rec tcheck env term =
   match term with
   | Lit l -> tcheck_lit l
   | Variable (t, v) ->
-    (try
-       let et = VarMap.find v env in
-       if types_compat et t (* annotation may be more concrete then inferred type *)
-       then (et, no_eff)
-       else Test.fail_report "tcheck: variable types disagree"
-     with Not_found -> Test.fail_report "tcheck: unknown variable")
+    begin match VarMap.find v env with
+      | exception Not_found ->
+         Test.fail_reportf "tcheck: unknown variable %s" v
+      | et ->
+         if not (types_compat et t)
+                (* annotation may be more concrete then inferred type *)
+         then Test.fail_report "tcheck: variable types disagree";
+         (et, no_eff)
+    end
   | ListTrm (typ, lst, eff) ->
-    (match typ with
-    | List elem_typ ->
-      List.iter
-        (fun e ->
-          if not (types_compat (imm_type e) elem_typ)
-          then Test.fail_report "tcheck: a list type mismatches its element's type")
-        lst;
-      (typ, eff)
-    | _ -> Test.fail_report "tcheck: ListTrm must have a list type")
-  (* typechecks variant constructors (currently checks only Option type but will be extended) *)
-  | Constructor (typ, Variant name, args, eff) ->
-    (match check_option_invars typ name args with
-    | Ok _ -> (typ, eff)
-    | Error e -> Test.fail_report e)
-  (* typechecks tuple constructors *)
-  | Constructor (typ, TupleArity i, args, eff) ->
-    (match check_tuple_invars typ i args with
-    | Ok _ -> (typ, eff)
-    | Error e -> Test.fail_report e)
+     let elem_typ = match typ with
+         | List et -> et
+         | _ -> Test.fail_report "tcheck: ListTrm must have a list type"
+     in
+     List.iter (fun e ->
+         let (e_ty, e_eff) = tcheck env e in
+         if not (types_compat e_ty elem_typ && eff_leq e_eff eff) then
+           Test.fail_report "tcheck: type mismatch in list element";
+       ) lst;
+     (typ, eff)
+  | Constructor (typ, cstr, args, eff) ->
+     let check_args tys args =
+       if List.length tys <> List.length args
+       then Test.fail_report "tcheck: arity mismatch";
+       List.iter2 (fun ty e ->
+         let (e_ty, e_eff) = tcheck env e in
+         if not (types_compat e_ty ty && eff_leq e_eff eff) then
+           Test.fail_report "tcheck: type mismatch in constructor argument";
+         ) tys args
+     in
+     begin match typ with
+       | Tuple tys ->
+          begin match cstr with
+            | TupleArity i ->
+               if List.length tys <> i then
+                 Test.fail_report "tcheck: tuple constructor of incorrect arity";
+               check_args tys args
+            | _ ->
+               Test.fail_report "tcheck: incorrect tuple constructor"
+          end
+       | Option t ->
+          begin match cstr with
+            | Variant "None" ->
+               check_args [] args
+            | Variant "Some" ->
+               check_args [t] args
+            | _ ->
+               Test.fail_report "tcheck: incorrect option constructor"
+          end
+       | _ -> Test.fail_report "tcheck: constructor at unexpected type"
+     end;
+     (typ, eff)
   | PatternMatch (ret_typ, matched_trm, cases, eff) ->
     tcheck env matched_trm |> ignore;
     let check_case (pat, body) =
