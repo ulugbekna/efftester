@@ -1,20 +1,20 @@
-.PHONY: build
+.PHONY: build exec run tests clean format
+
 build:
-	dune build src/effmain.exe
+	dune build src/effmain.exe $(dune_args)
 
-.PHONY: exec
 exec:
-	dune exec src/effmain.exe -- -v --colors $(args)
+	dune exec src/effmain.exe $(dune_args) -- -v --colors $(qcheck_args)
 
-.PHONY: tests
+run: build exec
+
 tests:
-	dune build src/ci_tests.exe && dune exec src/ci_tests.exe -- -v --colors $(args)
+	dune build src/ci_tests.exe $(build_args) && \
+	dune exec src/ci_tests.exe $(exec_args) -- -v --colors $(qcheck_args)
 
-.PHONY: clean
 clean:
 	dune clean
 	rm -f generated_tests/*
 
-.PHONY: clean
 format:
 	dune build @fmt --auto-promote

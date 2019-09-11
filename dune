@@ -1,0 +1,6 @@
+(dirs :standard \ generated_tests)
+
+(env
+ (dev
+  (flags
+   (:standard -warn-error -A))))
