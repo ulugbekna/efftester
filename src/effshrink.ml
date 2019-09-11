@@ -18,7 +18,7 @@ let shrink_list_elems shrink l yield =
 
 let rec occurs_in_pat var pat =
   match pat with
-  | PattVar x -> x = var
+  | PattVar (_, x) -> x = var
   | PattConstr (_, _, lst) -> List.exists (fun pt -> occurs_in_pat var pt) lst
 ;;
 

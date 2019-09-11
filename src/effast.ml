@@ -121,7 +121,7 @@ type constr_descr =
 
 (** type [pattern] is used to represent patterns in OCaml *)
 type pattern =
-  | PattVar of variable
+  | PattVar of etype * variable
   | PattConstr of etype * constr_descr * pattern list
 
 (** type [term] is used to represent terms of OCaml available Efftester *)
@@ -163,7 +163,7 @@ let imm_type t =
 ;;
 
 let imm_pat_type = function
-  | PattVar _ -> Typevar (newtypevar ())
+  | PattVar (t, _) -> t
   | PattConstr (t, _, _) -> t
 ;;
 
