@@ -234,8 +234,7 @@ let int_eq_test =
       match topt with
       | None -> false
       | Some t ->
-         is_native_byte_equiv
-           (str_of_pp (pp_term ~typeannot:false) (print_wrap t)))
+        is_native_byte_equiv (str_of_pp (pp_term ~typeannot:false) (print_wrap t)))
 ;;
 
 let rand_eq_test typ =
@@ -250,8 +249,8 @@ let rand_eq_test typ =
       match topt with
       | None -> false
       | Some t ->
-         is_native_byte_equiv
-           (str_of_pp (pp_term ~typeannot:false) (rand_print_wrap typ t)))
+        is_native_byte_equiv
+          (str_of_pp (pp_term ~typeannot:false) (rand_print_wrap typ t)))
 ;;
 
 let dep_eq_test ~with_logging =
@@ -273,8 +272,8 @@ let dep_eq_test ~with_logging =
         false
       | Some (typ, trm) ->
         let generated_prgm =
-          rand_print_wrap typ trm
-          |> str_of_pp (pp_term ~typeannot:false) in
+          rand_print_wrap typ trm |> str_of_pp (pp_term ~typeannot:false)
+        in
         logger "%s" generated_prgm;
         is_native_byte_equiv generated_prgm)
 ;;

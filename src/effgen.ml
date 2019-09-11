@@ -130,13 +130,15 @@ module StaticGenerators = struct
     let is_fresh x = not (VarSet.mem x domain) in
     let open Syntax in
     var_gen >|= fun var ->
-    if is_fresh var then var
-    else
+    if is_fresh var
+    then var
+    else (
       let rec loop i =
         let var' = Printf.sprintf "%s_%d" var i in
-        if is_fresh var' then var'
-        else loop (i + 1)
-      in loop 1
+        if is_fresh var' then var' else loop (i + 1)
+      in
+      loop 1)
+  ;;
 
   let string_gen = Gen.small_string ~gen:alpha_gen
   let str_to_str = Printf.sprintf "%S"
@@ -254,7 +256,8 @@ module StaticGenerators = struct
       fun () ->
         let pat_var = fresh_var_gen !pat_vars st in
         pat_vars := VarSet.add pat_var !pat_vars;
-        pat_var in
+        pat_var
+    in
     let env = ref env in
     let rec to_pat = function
       | Tuple elt_types as tuple_typ ->
@@ -651,10 +654,9 @@ module GeneratorsWithContext (Ctx : Context) = struct
         (PatternMatch
            ( t,
              match_trm,
-             [ (PattConstr (ot, Variant "Some", [ PattVar (bt, var_name) ]),
-                some_branch_trm);
-               (PattConstr (ot, Variant "None", []),
-                none_branch_trm)
+             [ ( PattConstr (ot, Variant "Some", [ PattVar (bt, var_name) ]),
+                 some_branch_trm );
+               (PattConstr (ot, Variant "None", []), none_branch_trm)
              ],
              eff ))
     in

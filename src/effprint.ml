@@ -115,11 +115,9 @@ let pp_pattern ~typeannot ppf pat =
     | PattVar _ as simple -> pp_simple_pattern ppf simple
   and pp_simple_pattern ppf = function
     | PattVar (typ, v) ->
-       if not typeannot
-       then pp_var ppf v
-       else Format.fprintf ppf "(%a : %a)"
-              pp_var v
-              (pp_type ~effannot:false) typ
+      if not typeannot
+      then pp_var ppf v
+      else Format.fprintf ppf "(%a : %a)" pp_var v (pp_type ~effannot:false) typ
     | non_simple -> Format.fprintf ppf "(%a)" pp_pattern non_simple
   in
   pp_pattern ppf pat
@@ -175,9 +173,13 @@ let pp_term ~typeannot ppf term =
           args)
     | PatternMatch (_, match_trm, branches, _) ->
       let pp_case ppf (pattern, body) =
-        Format.fprintf ppf "@;| @[<2>%a@ ->@ %a@]"
-          (pp_pattern ~typeannot) pattern
-          pp_arg body
+        Format.fprintf
+          ppf
+          "@;| @[<2>%a@ ->@ %a@]"
+          (pp_pattern ~typeannot)
+          pattern
+          pp_arg
+          body
         (* we use pp_arg to ensure that inner 'match' expressions get parenthesized,
            to avoid incorrect-precedence cases such as
              match x with
