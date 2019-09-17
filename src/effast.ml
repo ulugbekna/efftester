@@ -29,6 +29,9 @@ type etype =
   | Typevar of typevar
   | Unit
   | Int
+  | Int32
+  | Int64
+  | NativeInt
   | Float
   | Bool
   | String
@@ -41,7 +44,7 @@ type etype =
 (** [ftv expr] returns free type variables in [expr] *)
 let rec ftv = function
   | Typevar a -> [ a ]
-  | Unit | Int | Float | Bool | String -> []
+  | Unit | Int | Int32 | Int64 | NativeInt | Float | Bool | String -> []
   | Option e -> ftv e
   | Ref t -> ftv t
   | Tuple t_lst -> List.map ftv t_lst |> List.concat (* duplicate elements allowed? *)
@@ -57,7 +60,7 @@ let rec occurs tvar = function
   | Tuple t_lst -> List.exists (fun t -> occurs tvar t) t_lst
   | List a -> occurs tvar a
   | Fun (a, _, b) -> occurs tvar a || occurs tvar b
-  | Unit | Int | Float | Bool | String -> false
+  | Unit | Int | Int32 | Int64 | NativeInt | Float | Bool | String -> false
 ;;
 
 (** [arity fn_typ] determines arity of a function type [fn_typ] *)
@@ -70,7 +73,7 @@ let rec arity = function
     to types given in [repl] *)
 let rec subst replacements t =
   match t with
-  | Unit | Int | Float | Bool | String -> t
+  | Unit | Int | Int32 | Int64 | NativeInt | Float | Bool | String -> t
   | Typevar i -> (try List.assoc i replacements with Not_found -> t)
   | Option t' -> Option (subst replacements t')
   | Ref t' -> Ref (subst replacements t')
@@ -94,7 +97,7 @@ let eff_leq eff eff_exp =
 
 let rec normalize_eff t =
   match t with
-  | Typevar _ | Unit | Int | Float | Bool | String -> t
+  | Typevar _ | Unit | Int | Int32 | Int64 | NativeInt | Float | Bool | String -> t
   | Option t' -> Option (normalize_eff t')
   | Ref t' -> Ref (normalize_eff t')
   | Tuple t_lst -> Tuple (List.map normalize_eff t_lst)
@@ -108,6 +111,9 @@ let rec normalize_eff t =
 type lit =
   | LitUnit
   | LitInt of int
+  | LitInt32 of int32
+  | LitInt64 of int64
+  | LitNativeInt of nativeint
   | LitFloat of float
   | LitBool of bool
   | LitStr of string
@@ -146,6 +152,9 @@ let imm_type t =
     match l with
     | LitUnit -> Unit
     | LitInt _ -> Int
+    | LitInt32 _ -> Int32
+    | LitInt64 _ -> Int64
+    | LitNativeInt _ -> NativeInt
     | LitFloat _ -> Float
     | LitBool _ -> Bool
     | LitStr _ -> String

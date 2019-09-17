@@ -29,6 +29,9 @@ let tcheck_lit l =
   match l with
   | LitUnit -> (Unit, no_eff)
   | LitInt _ -> (Int, no_eff)
+  | LitInt32 _ -> (Int32, no_eff)
+  | LitInt64 _ -> (Int64, no_eff)
+  | LitNativeInt _ -> (NativeInt, no_eff)
   | LitFloat _ -> (Float, no_eff)
   | LitBool _ -> (Bool, no_eff)
   | LitStr _ -> (String, no_eff)

@@ -11,7 +11,14 @@ let rec unify_list = function
   | (l, r) :: rest ->
     let sub = unify_list rest in
     (match (subst sub l, subst sub r) with
-    | Unit, Unit | Int, Int | Float, Float | Bool, Bool | String, String -> sub
+    | Unit, Unit
+    | Int, Int
+    | Int32, Int32
+    | Int64, Int64
+    | NativeInt, NativeInt
+    | Float, Float
+    | Bool, Bool
+    | String, String -> sub
     | Option a, Option b -> unify_list [ (a, b) ] @ sub
     | Ref a, Ref b -> unify_list [ (a, b) ] @ sub
     | Typevar a, Typevar b -> if a = b then sub else (a, r) :: sub
@@ -26,6 +33,9 @@ let rec unify_list = function
     | _, Typevar a -> if occurs a l then raise No_solution else (a, l) :: sub
     | Unit, _
     | Int, _
+    | Int32, _
+    | Int64, _
+    | NativeInt, _
     | Float, _
     | Bool, _
     | String, _
@@ -33,8 +43,7 @@ let rec unify_list = function
     | Ref _, _
     | Tuple _, _
     | List _, _
-    | Fun _, _ ->
-      raise No_solution)
+    | Fun _, _ -> raise No_solution)
 ;;
 
 let unify r t = try Sol (unify_list [ (r, t) ]) with No_solution -> No_sol
@@ -43,7 +52,14 @@ let unify r t = try Sol (unify_list [ (r, t) ]) with No_solution -> No_sol
 (* or framed differently: whether the second is a particular instance of the first *)
 let rec types_compat t t' =
   match (t, t') with
-  | Unit, Unit | Int, Int | Float, Float | Bool, Bool | String, String -> true
+  | Unit, Unit
+  | Int, Int
+  | Int32, Int32
+  | Int64, Int64
+  | NativeInt, NativeInt
+  | Float, Float
+  | Bool, Bool
+  | String, String -> true
   | Option a, Option b -> types_compat a b
   | Ref a, Ref b -> types_compat a b
   | Tuple t_lst1, Tuple t_lst2 ->
@@ -57,6 +73,9 @@ let rec types_compat t t' =
     | Sol _ -> true)
   | Unit, _
   | Int, _
+  | Int32, _
+  | Int64, _
+  | NativeInt, _
   | Float, _
   | Bool, _
   | String, _
@@ -64,8 +83,7 @@ let rec types_compat t t' =
   | Ref _, _
   | Tuple _, _
   | List _, _
-  | Fun _, _ ->
-    false
+  | Fun _, _ -> false
 ;;
 
 let rec get_return_types = function

@@ -78,7 +78,17 @@ let printer_by_etype typ =
     | Int -> ("print_int", lookup_var "print_int" init_tri_env)
     | Float -> ("print_float", lookup_var "print_float" init_tri_env)
     | String -> ("print_string", lookup_var "print_string" init_tri_env)
-    | Unit | Typevar _ | Option _ | Ref _ | Tuple _ | List _ | Fun _ | Bool ->
+    | Unit
+    | Int32
+    | Int64
+    | NativeInt
+    | Typevar _
+    | Option _
+    | Ref _
+    | Tuple _
+    | List _
+    | Fun _
+    | Bool ->
       failwith
         "printer_by_etype: such base type should not be generated (not implemented)"
   in

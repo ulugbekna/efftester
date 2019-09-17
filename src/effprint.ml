@@ -64,6 +64,9 @@ let pp_type ?(effannot = false) ppf etype =
     | Typevar a -> pp_tvar ppf a
     | Unit -> Format.fprintf ppf "unit"
     | Int -> Format.fprintf ppf "int"
+    | Int32 -> Format.fprintf ppf "int32"
+    | Int64 -> Format.fprintf ppf "int64"
+    | NativeInt -> Format.fprintf ppf "nativeint"
     | Float -> Format.fprintf ppf "float"
     | Bool -> Format.fprintf ppf "bool"
     | String -> Format.fprintf ppf "string"
@@ -78,6 +81,12 @@ let pp_solution ?effannot = pp_list (pp_pair pp_tvar (pp_type ?effannot))
 let pp_lit ppf = function
   | LitUnit -> Format.fprintf ppf "()"
   | LitInt i -> if i < 0 then Format.fprintf ppf "(%d)" i else Format.fprintf ppf "%d" i
+  | LitInt32 i32 ->
+    if i32 < 0l then Format.fprintf ppf "(%ldl)" i32 else Format.fprintf ppf "%ldl" i32
+  | LitInt64 i64 ->
+    if i64 < 0L then Format.fprintf ppf "(%LdL)" i64 else Format.fprintf ppf "%LdL" i64
+  | LitNativeInt ni ->
+    if ni < 0n then Format.fprintf ppf "(%ndn)" ni else Format.fprintf ppf "%ndn" ni
   | LitFloat f ->
     if f <= 0. then Format.fprintf ppf "(%F)" f else Format.fprintf ppf "%F" f
   (* We want parentheses when f equals (-0.);

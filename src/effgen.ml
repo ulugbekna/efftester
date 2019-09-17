@@ -149,6 +149,32 @@ module StaticGenerators = struct
       frequency [ (10, small_int); (5, int); (1, oneofl [ min_int; -1; 0; 1; max_int ]) ])
   ;;
 
+  let int32_gen =
+    Gen.(
+      frequency [ (4, ui32); (1, oneofl [ Int32.min_int; -1l; 0l; 1l; Int32.max_int ]) ])
+  ;;
+
+  let int64_gen =
+    Gen.(
+      frequency [ (4, ui64); (1, oneofl [ Int64.min_int; -1L; 0L; 1L; Int64.max_int ]) ])
+  ;;
+
+  (* TODO: Send a PR to QCheck and replace the fn below *)
+  let nativeint st =
+    let pos_ni = Random.State.nativeint st Nativeint.max_int in
+    match Gen.oneofl [ `Pos; `Neg ] st with
+    | `Pos -> pos_ni
+    | `Neg -> Nativeint.neg pos_ni
+  ;;
+
+  let nativeint_gen =
+    Gen.(
+      frequency
+        [ (4, nativeint);
+          (1, oneofl [ Nativeint.min_int; -1n; 0n; 1n; Nativeint.max_int ])
+        ])
+  ;;
+
   let float_gen =
     Gen.frequency
       [ (5, Gen.float);
@@ -200,7 +226,7 @@ module StaticGenerators = struct
   let type_gen =
     (* Generates ground types (sans type variables) *)
     Gen.fix (fun recgen n ->
-        let base_types = [ Unit; Int; Float; Bool; String ] in
+        let base_types = [ Unit; Int; Int32; Int64; NativeInt; Float; Bool; String ] in
         if n = 0
         then Gen.oneofl base_types
         else
@@ -294,6 +320,9 @@ module GeneratorsWithContext (Ctx : Context) = struct
     match t with
     | Unit -> Gen.return LitUnit
     | Int -> Gen.map (fun i -> LitInt i) int_gen
+    | Int32 -> Gen.map (fun i -> LitInt32 i) int32_gen
+    | Int64 -> Gen.map (fun i -> LitInt64 i) int64_gen
+    | NativeInt -> Gen.map (fun i -> LitNativeInt i) nativeint_gen
     | Float -> Gen.map (fun f -> LitFloat f) float_gen
     | Bool -> Gen.map (fun b -> LitBool b) Gen.bool
     | String -> Gen.map (fun s -> LitStr s) string_gen
@@ -316,7 +345,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
 *)
   let lit_rules _env s eff size =
     match s with
-    | Unit | Int | Float | Bool | String ->
+    | Unit | Int | Int32 | Int64 | NativeInt | Float | Bool | String ->
       [ (6, Gen.map (fun l -> Some (Lit l)) (literal_gen s eff size)) ]
     | Tuple _ | List _ | Option _ | Ref _ | Fun _ | Typevar _ -> []
   ;;
@@ -367,9 +396,19 @@ module GeneratorsWithContext (Ctx : Context) = struct
       return_opt (Lambda (Fun (s, myeff, imm_type m), x, s, m))
     in
     match u with
-    | Unit | Int | Float | Bool | String | Option _ | Ref _ | Tuple _ | List _
-    | Typevar _ ->
-      []
+    | Unit
+    | Int
+    | Int32
+    | Int64
+    | NativeInt
+    | Float
+    | Bool
+    | String
+    | Option _
+    | Ref _
+    | Tuple _
+    | List _
+    | Typevar _ -> []
     | Fun (s, e, t) -> [ (8, gen s e t) ]
 
   (* Sized generator of applications (calls) according to the APP rule

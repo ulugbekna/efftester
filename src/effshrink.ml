@@ -82,6 +82,9 @@ let rec term_size = function
     (match lit with
     | LitUnit -> 1
     | LitInt n -> 1 + abs n (* we want shrinkers that reduce n to reduce size *)
+    | LitInt32 n -> 1 + (Int32.abs n |> Int32.to_int)
+    | LitInt64 n -> 1 + (Int64.abs n |> Int64.to_int)
+    | LitNativeInt n -> 1 + (Nativeint.abs n |> Nativeint.to_int)
     | LitFloat x -> 1 + int_of_float (ceil (abs_float x))
     | LitBool _ -> 1
     | LitStr s -> 1 + String.length s)
@@ -102,6 +105,9 @@ let rec minimal_term ty =
   | Typevar _ -> raise Not_found
   | Unit -> Lit LitUnit
   | Int -> Lit (LitInt 0)
+  | Int32 -> Lit (LitInt32 0l)
+  | Int64 -> Lit (LitInt64 0L)
+  | NativeInt -> Lit (LitNativeInt 0n)
   | Float -> Lit (LitFloat 0.)
   | Bool -> Lit (LitBool true)
   | String -> Lit (LitStr "")
