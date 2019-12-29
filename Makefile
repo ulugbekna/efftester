@@ -1,14 +1,14 @@
 .PHONY: build exec run tests clean format
 
 build:
-	dune build src/effmain.exe $(dune_args)
+	dune build src/effmain.exe $(build_args)
 
 exec:
-	dune exec src/effmain.exe $(dune_args) -- -v --colors $(qcheck_args)
+	dune exec src/effmain.exe $(exec_args) -- -v --colors $(qcheck_args)
 
 run: build exec
 
-tests:
+test:
 	dune build src/ci_tests.exe $(build_args) && \
 	dune exec src/ci_tests.exe $(exec_args) -- -v --colors $(qcheck_args)
 
