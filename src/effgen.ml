@@ -159,15 +159,15 @@ module StaticGenerators = struct
       frequency [ (4, ui64); (1, oneofl [ Int64.min_int; -1L; 0L; 1L; Int64.max_int ]) ])
   ;;
 
-  (* TODO: Send a PR to QCheck and replace the fn below *)
-  let nativeint st =
-    let pos_ni = Random.State.nativeint st Nativeint.max_int in
-    match Gen.oneofl [ `Pos; `Neg ] st with
-    | `Pos -> pos_ni
-    | `Neg -> Nativeint.neg pos_ni
-  ;;
-
   let nativeint_gen =
+    (* [nativeint] in the current implementation does not generate some of the nativeint
+      values. *)
+    let nativeint st =
+      let pos_ni = Random.State.nativeint st Nativeint.max_int in
+      match Gen.oneofl [ `Pos; `Neg ] st with
+      | `Pos -> pos_ni
+      | `Neg -> Nativeint.neg pos_ni
+    in
     Gen.(
       frequency
         [ (4, nativeint);
@@ -376,15 +376,15 @@ module GeneratorsWithContext (Ctx : Context) = struct
     List.map (fun var -> (1, Gen.return (Some (Variable (s, var))))) candvars'
   ;;
 
-  (* Sized generator of lambda terms according to the LAM rule
-   @param env  : surrounding environment
-   @param u    : desired goal type
-   @param eff  : desired effect
-   @param size : size parameter
+(* Sized generator of lambda terms according to the LAM rule
+  @param env  : surrounding environment
+  @param u    : desired goal type
+  @param eff  : desired effect
+  @param size : size parameter
 
-               (x:s), env |- m : t
-    -------------------------------------------- (LAM)
-       env |- (fun (x:s) -> m) : s -> t
+              (x:s), env |- m : t
+  -------------------------------------------- (LAM)
+      env |- (fun (x:s) -> m) : s -> t
 *)
   let rec lam_rules env u _eff size =
     (* lams have no immediate effect, so 'eff' param is ignored *)
