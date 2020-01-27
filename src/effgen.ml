@@ -7,19 +7,6 @@ open Effprint
 
 (** Auxiliary functions *)
 
-(* TODO: replace by [QCheck.Gen.float_bound_inclusive] from new QCheck release *)
-let float_bound_inclusive bound st = Random.State.float st bound
-
-(* TODO: replace by [QCheck.Gen.shuffle_w_l] from new QCheck release *)
-let shuffle_w_l l st =
-  let sample (w, v) =
-    let fl_w = float_of_int w in
-    (float_bound_inclusive 1. st ** (1. /. fl_w), v)
-  in
-  let samples = List.map sample l in
-  List.sort (fun (w1, _) (w2, _) -> compare w2 w1) samples |> List.map snd
-;;
-
 let rec first_some f lst =
   match lst with
   | [] -> None
@@ -745,7 +732,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
   *)
   and term_from_rules rules : term option Gen.t =
    fun st ->
-    let shuffled_rules = shuffle_w_l rules st in
+    let shuffled_rules = QCheck.Gen.shuffle_w_l rules st in
     first_some (fun rule -> rule st) shuffled_rules
 
   and term_gen_sized env goal eff size =
