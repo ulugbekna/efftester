@@ -188,6 +188,7 @@ let tuple_arity = function
 let some typ payload eff = Constructor (typ, Variant "Some", [ payload ], eff)
 let none typ = Constructor (typ, Variant "None", [], no_eff)
 
+(* {Ref} contains types and bindings for `ref` in the standard library. *)
 module Ref = struct
   let ref_t =
     let new_tv = newtypevar () in

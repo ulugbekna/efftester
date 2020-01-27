@@ -4,7 +4,7 @@ open Effast
 module TypeSet = Set.Make (struct
   type t = etype
 
-  let compare = Pervasives.compare
+  let compare = Stdlib.compare
 end)
 
 module VarSet = Set.Make (struct
@@ -22,7 +22,7 @@ end)
 module TypeMap = Map.Make (struct
   type t = etype
 
-  let compare = Pervasives.compare
+  let compare = Stdlib.compare
 end)
 
 let add_multi_map key value map =

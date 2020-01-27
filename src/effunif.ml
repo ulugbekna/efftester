@@ -33,14 +33,13 @@ let rec unify_list = function
     | Ref _, _
     | Tuple _, _
     | List _, _
-    | Fun _, _ ->
-      raise No_solution)
+    | Fun _, _ -> raise No_solution)
 ;;
 
 let unify r t = try Sol (unify_list [ (r, t) ]) with No_solution -> No_sol
 
-(* determines whether the first arg is a generalization of the second *)
-(* or framed differently: whether the second is a particular instance of the first *)
+(* determines whether the first arg is a generalization of the second
+  or framed differently: whether the second is a particular instance of the first *)
 let rec types_compat t t' =
   match (t, t') with
   | Unit, Unit | Int, Int | Float, Float | Bool, Bool | String, String -> true
@@ -64,8 +63,7 @@ let rec types_compat t t' =
   | Ref _, _
   | Tuple _, _
   | List _, _
-  | Fun _, _ ->
-    false
+  | Fun _, _ -> false
 ;;
 
 let rec get_return_types = function

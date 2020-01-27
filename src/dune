@@ -1,3 +1,3 @@
 (executables
- (names effmain effstat ci_tests)
+ (names effmain ci_tests)
  (libraries qcheck))

@@ -142,7 +142,7 @@ module StaticGenerators = struct
 
   let string_gen = Gen.small_string ~gen:alpha_gen
   let str_to_str = Printf.sprintf "%S"
-  let sqrt i = int_of_float (Pervasives.sqrt (float_of_int i))
+  let sqrt i = int_of_float (Float.sqrt (float_of_int i))
 
   let int_gen =
     Gen.(
@@ -294,7 +294,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
     match t with
     | Unit -> Gen.return LitUnit
     | Int -> Gen.map (fun i -> LitInt i) int_gen
-    | Float -> Gen.map (fun f -> LitFloat f) float_gen
+    | Float -> Gen.map (fun f -> LitFloat f) Ctx.float_gen_with_rep
     | Bool -> Gen.map (fun b -> LitBool b) Gen.bool
     | String -> Gen.map (fun s -> LitStr s) string_gen
     | Option _ -> fail "option"
@@ -367,9 +367,16 @@ module GeneratorsWithContext (Ctx : Context) = struct
       return_opt (Lambda (Fun (s, myeff, imm_type m), x, s, m))
     in
     match u with
-    | Unit | Int | Float | Bool | String | Option _ | Ref _ | Tuple _ | List _
-    | Typevar _ ->
-      []
+    | Unit
+    | Int
+    | Float
+    | Bool
+    | String
+    | Option _
+    | Ref _
+    | Tuple _
+    | List _
+    | Typevar _ -> []
     | Fun (s, e, t) -> [ (8, gen s e t) ]
 
   (* Sized generator of applications (calls) according to the APP rule
