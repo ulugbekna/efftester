@@ -168,15 +168,15 @@ module StaticGenerators = struct
             fl)
           float_gen
           rs
-      | _xs ->
+      | cached_floats ->
         Gen.map
           (fun fl ->
-            if List.mem fl (get_cache_lst ())
+            if List.mem fl cached_floats
             then fl
             else (
               to_cache fl;
               fl))
-          (Gen.frequency [ (2, float_gen); (8, from_cache_gen) ])
+          (Gen.frequency [ (1, float_gen); (2, from_cache_gen) ])
           rs
   ;;
 
@@ -749,10 +749,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
       |> term_from_rules
   ;;
 
-  let list_permute_term_gen_rec_wrapper env t eff =
-    Gen.sized (term_gen_sized env t eff)
-  ;;
-
+  let list_permute_term_gen_rec_wrapper env t eff = Gen.sized (term_gen_sized env t eff)
   let term_gen = list_permute_term_gen_rec_wrapper init_tri_env
 
   let dep_term_gen =
