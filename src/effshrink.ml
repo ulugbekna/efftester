@@ -2,6 +2,20 @@ module Iter = QCheck.Iter
 module Shrink = QCheck.Shrink
 open Effast
 
+(* [shrink_list_elems shrink l yield] shrinks a list of elements [l] given a shrinker [shrink]
+  TODO: use QCheck version of [shrink_list_elems] when @gasche's PR gets merged *)
+let shrink_list_elems shrink l yield =
+  (* try to shrink each element of the list *)
+  let rec elem_loop rev_prefix suffix =
+    match suffix with
+    | [] -> ()
+    | x :: xs ->
+      shrink x (fun x' -> yield (List.rev_append rev_prefix (x' :: xs)));
+      elem_loop (x :: rev_prefix) xs
+  in
+  elem_loop [] l
+;;
+
 let rec occurs_in_pat var pat =
   match pat with
   | PattVar (_, x) -> x = var

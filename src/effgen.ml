@@ -354,16 +354,8 @@ module GeneratorsWithContext (Ctx : Context) = struct
       return_opt (Lambda (Fun (s, myeff, imm_type m), x, s, m))
     in
     match u with
-    | Unit
-    | Int
-    | Float
-    | Bool
-    | String
-    | Option _
-    | Ref _
-    | Tuple _
-    | List _
-    | Typevar _ -> []
+    | Unit | Int | Float | Bool | String | Option _ | Ref _ | Tuple _ | List _ | Typevar _
+      -> []
     | Fun (s, e, t) -> [ (8, gen s e t) ]
 
   (* Sized generator of applications (calls) according to the APP rule
@@ -605,8 +597,8 @@ module GeneratorsWithContext (Ctx : Context) = struct
         (match unify else_type subst_t with
         | No_sol ->
           failwithf
-            "if_rules: generated else branch type %a does not unify with subst goal \
-             type %a"
+            "if_rules: generated else branch type %a does not unify with subst goal type \
+             %a"
             (pp_type ~effannot:true)
             else_type
             (pp_type ~effannot:true)
@@ -627,8 +619,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
         (match name with
         | "None" -> return (Some (none t))
         | "Some" ->
-          term_gen_sized env t' eff (size - 1) >>=? fun trm ->
-          return_opt (some t trm eff)
+          term_gen_sized env t' eff (size - 1) >>=? fun trm -> return_opt (some t trm eff)
         | _ -> failwith "option_intro_rules: impossible option adt_constr name")
       | _ -> return None
     in
@@ -678,7 +669,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
       [ (3, gen) ]
     | _ -> []
 
-  and tuple_elim_rules env goal_t eff size =
+  and tuple_elim_rules env t eff size =
     let open Syntax in
     (* generate a new tuple that is then pattern matched and [goal_t] term is returned *)
     let pattern_match_gen =
@@ -687,21 +678,21 @@ module GeneratorsWithContext (Ctx : Context) = struct
       Gen.list_size (return arity) (type_gen size') >>= fun types_lst ->
       term_gen_sized env (Tuple types_lst) eff size' >>=? fun tuple ->
       pattern_of_type env (imm_type tuple) >>= fun (pat, env') ->
-      term_gen_sized env' goal_t eff (sqrt size) >>=? fun ret_term ->
-      return_opt (PatternMatch (goal_t, tuple, [ (pat, ret_term) ], eff))
+      term_gen_sized env' t eff (sqrt size) >>=? fun ret_term ->
+      return_opt (PatternMatch (t, tuple, [ (pat, ret_term) ], eff))
     in
     [ (1, pattern_match_gen) ]
 
-  and list_intro_rules env goal_typ eff size =
+  and list_intro_rules env t eff size =
     let open Syntax in
-    match goal_typ with
+    match t with
     | List elt_typ ->
       let gen =
         match elt_typ with
-        | Typevar _ -> return_opt (ListTrm (goal_typ, [], no_eff))
+        | Typevar _ -> return_opt (ListTrm (t, [], no_eff))
         | _ ->
           if size = 0
-          then return_opt (ListTrm (goal_typ, [], no_eff))
+          then return_opt (ListTrm (t, [], no_eff))
           else
             Gen.int_bound (sqrt size) >>= fun lst_size ->
             let elems_gen =
@@ -720,7 +711,7 @@ module GeneratorsWithContext (Ctx : Context) = struct
                 []
                 opt_lst
             in
-            return_opt (ListTrm (goal_typ, lst, eff))
+            return_opt (ListTrm (t, lst, eff))
       in
       [ (3, gen) ]
     | _ -> []
@@ -735,8 +726,8 @@ module GeneratorsWithContext (Ctx : Context) = struct
     let shuffled_rules = QCheck.Gen.shuffle_w_l rules st in
     first_some (fun rule -> rule st) shuffled_rules
 
-  and term_gen_sized env goal eff size =
-    let apply f = f env goal eff size in
+  and term_gen_sized env t eff size =
+    let apply f = f env t eff size in
     let apply_concat lst = List.map apply lst |> List.concat in
     if size = 0
     then apply_concat [ lit_rules; var_rules ] |> term_from_rules
@@ -758,8 +749,8 @@ module GeneratorsWithContext (Ctx : Context) = struct
       |> term_from_rules
   ;;
 
-  let list_permute_term_gen_rec_wrapper env goal eff =
-    Gen.sized (term_gen_sized env goal eff)
+  let list_permute_term_gen_rec_wrapper env t eff =
+    Gen.sized (term_gen_sized env t eff)
   ;;
 
   let term_gen = list_permute_term_gen_rec_wrapper init_tri_env
